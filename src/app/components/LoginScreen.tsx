@@ -52,7 +52,7 @@ export function LoginScreen({ onLogin, onCreateTeam, onJoinTeam }: Props) {
       setLoading(true);
       setError('');
       const data = await signIn(email, password);
-      login(data.user, data.token);
+      await login(data.user, data.token);
       const userRole = data.user.role === 'LEADER' ? 'leader' : 'member';
       onLogin(userRole);
     } catch (err: any) {
@@ -171,5 +171,4 @@ export function LoginScreen({ onLogin, onCreateTeam, onJoinTeam }: Props) {
     </div>
   );
 }
-
 

@@ -8,4 +8,13 @@ export const getHeaders = () => {
   };
 };
 
+export const readJson = async <T = any>(response: Response): Promise<T> => {
+  if (response.status === 204) return null as T;
+  try {
+    return await response.json();
+  } catch {
+    return null as T;
+  }
+};
+
 export default BASE_URL;
