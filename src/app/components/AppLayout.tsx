@@ -5,6 +5,7 @@ import { Categories } from './Categories';
 import { TeamPlanner } from './TeamPlanner';
 import { TeamManagement } from './TeamManagement';
 import { ProfileNotifications } from './ProfileNotifications';
+import { MemberProfilePage } from './MemberProfilePage';
 import { notifications as initialNotifs } from './mockData';
 
 const BG = '#0F1419';
@@ -85,7 +86,7 @@ export function AppLayout({ onLogout }: Props) {
       case 'planner': return <TeamPlanner />;
       case 'team': return <TeamManagement />;
       case 'notifications': return <ProfileNotifications initialTab="notifications" />;
-      case 'profile': return <ProfileNotifications initialTab="profile" />;
+      case 'profile': return <MemberProfilePage/>;
       default: return <Dashboard />;
     }
   };

@@ -1,9 +1,27 @@
-import { useState } from 'react';
-import { memberProfile } from './mockData';
+import { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { getUserDetail, updateMemberProfile } from '../services/profileService';
 
 const CARD_BG = '#141C2B';
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
+
+interface Profile {
+  id: number;
+  role: string;
+  name: string;
+  email: string;
+  position: string;
+  initials: string;
+  maxHours: number;
+  activeHours: number;
+  abilities: string[];
+  interests: string[];
+  taskStatusCounts: { toDoCount: number; inProgressCount: number; doneCount: number };
+}
+
+const getInitials = (name: string) =>
+  name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
 function Pill({ text, color, onRemove }: { text: string; color: string; onRemove?: () => void }) {
   return (
@@ -54,7 +72,7 @@ function ChipInput({ value, onChange, color, placeholder }: { value: string[]; o
 }
 
 function EditModal({ profile, onClose, onSave }: {
-  profile: typeof memberProfile;
+  profile: Profile;
   onClose: () => void;
   onSave: (data: { maxHours: number; abilities: string[]; interests: string[] }) => void;
 }) {
@@ -67,7 +85,6 @@ function EditModal({ profile, onClose, onSave }: {
       <style>{`@keyframes fadeSlideDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
         <div style={{ width: '100%', maxWidth: '480px', backgroundColor: '#0D1520', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '18px', boxShadow: '0 32px 80px rgba(0,0,0,0.6)', animation: 'fadeSlideDown 0.18s ease' }}>
-          {/* Header */}
           <div style={{ padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ color: 'white', fontSize: '15px', fontWeight: '700' }}>Editar perfil</span>
             <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4B5563' }}
@@ -79,7 +96,6 @@ function EditModal({ profile, onClose, onSave }: {
           </div>
 
           <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            {/* Read-only info */}
             <div style={{ backgroundColor: '#111827', borderRadius: '10px', padding: '14px', display: 'flex', gap: '14px', alignItems: 'center' }}>
               <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <span style={{ color: 'white', fontSize: '13px', fontWeight: '800' }}>{profile.initials}</span>
@@ -91,7 +107,6 @@ function EditModal({ profile, onClose, onSave }: {
             </div>
             <p style={{ color: '#374151', fontSize: '11px', textAlign: 'center', marginTop: '-10px' }}>Nombre, cargo y email solo pueden ser modificados por el líder del equipo.</p>
 
-            {/* Max hours */}
             <div>
               <label style={{ color: '#6B7280', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '7px' }}>Horas máximas semanales</label>
               <input
@@ -100,20 +115,17 @@ function EditModal({ profile, onClose, onSave }: {
               />
             </div>
 
-            {/* Abilities */}
             <div>
               <label style={{ color: '#6B7280', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '7px' }}>Habilidades</label>
               <ChipInput value={abilities} onChange={setAbilities} color={ACCENT} placeholder="Ej: React, TypeScript..." />
             </div>
 
-            {/* Interests */}
             <div>
               <label style={{ color: '#6B7280', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '7px' }}>Intereses</label>
               <ChipInput value={interests} onChange={setInterests} color={PURPLE} placeholder="Ej: UX Research, IA..." />
             </div>
           </div>
 
-          {/* Footer */}
           <div style={{ padding: '14px 22px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
             <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: '9px', border: '1px solid rgba(255,255,255,0.08)', backgroundColor: 'transparent', color: '#6B7280', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
               Cancelar
@@ -132,12 +144,58 @@ function EditModal({ profile, onClose, onSave }: {
 }
 
 export function MemberProfilePage() {
-  const [profile, setProfile] = useState(memberProfile);
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    getUserDetail(user.id)
+      .then(data => {
+        setProfile({
+          id: data.id,
+          role: data.role,
+          name: data.name,
+          email: data.email,
+          position: data.position,
+          initials: getInitials(data.name),
+          maxHours: data.profile.maxHours,
+          activeHours: data.profile.activeHours,
+          abilities: data.profile.abilities,
+          interests: data.profile.interests,
+          taskStatusCounts: data.taskStatusCounts,
+        });
+        setError(null);
+      })
+      .catch(() => setError('No se pudo cargar el perfil.'))
+      .finally(() => setLoading(false));
+  }, [user]);
+
+  const handleSave = async ({ maxHours, abilities, interests }: { maxHours: number; abilities: string[]; interests: string[] }) => {
+    if (!profile) return;
+    try {
+      await updateMemberProfile(profile.id, { maxHours, abilities, interests });
+      setProfile(p => p ? { ...p, maxHours, abilities, interests } : p);
+    } catch {
+      setError('No se pudo guardar el perfil.');
+    }
+  };
+
+  if (loading) {
+    return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando perfil...</div>;
+  }
+
+  if (error) {
+    return <div className="p-6" style={{ color: '#F59E0B', fontSize: '13px' }}>{error}</div>;
+  }
+
+  if (!profile) return null;
 
   const hoursPercent = Math.min(100, Math.round((profile.activeHours / profile.maxHours) * 100));
   const hoursColor = hoursPercent > 80 ? '#F59E0B' : ACCENT;
-
   const { toDoCount, inProgressCount, doneCount } = profile.taskStatusCounts;
 
   return (
@@ -162,7 +220,6 @@ export function MemberProfilePage() {
         </button>
       </div>
 
-      {/* Profile card */}
       <div style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '24px', marginBottom: '16px' }}>
         <div className="flex items-center gap-4 mb-5">
           <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -172,16 +229,14 @@ export function MemberProfilePage() {
             <div className="flex items-center gap-2 flex-wrap">
               <h2 style={{ color: 'white', fontSize: '18px', fontWeight: '700' }}>{profile.name}</h2>
               <span style={{ backgroundColor: `${PURPLE}20`, color: PURPLE, fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px', border: `1px solid ${PURPLE}30` }}>
-                Miembro · {profile.position}
-              </span>
+  {profile.role === 'LEADER' ? 'Líder' : 'Miembro'} · {profile.position}
+</span>
             </div>
             <p style={{ color: '#374151', fontSize: '12px', marginTop: '2px' }}>{profile.email}</p>
           </div>
         </div>
 
-        {/* Availability + Task Summary side by side */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-          {/* Availability bar */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <span style={{ color: '#4B5563', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Disponibilidad semanal</span>
@@ -193,7 +248,6 @@ export function MemberProfilePage() {
             <p style={{ color: '#374151', fontSize: '11px', marginTop: '5px' }}>{profile.maxHours - profile.activeHours}h disponibles esta semana</p>
           </div>
 
-          {/* Task Summary */}
           <div>
             <span style={{ color: '#4B5563', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '8px' }}>Resumen de tareas</span>
             <div style={{ display: 'flex', gap: '10px' }}>
@@ -213,7 +267,6 @@ export function MemberProfilePage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-        {/* Abilities */}
         <div style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '20px' }}>
           <p style={{ color: '#4B5563', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '12px' }}>Habilidades</p>
           {profile.abilities.length === 0 ? (
@@ -225,7 +278,6 @@ export function MemberProfilePage() {
           )}
         </div>
 
-        {/* Interests */}
         <div style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '20px' }}>
           <p style={{ color: '#4B5563', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '12px' }}>Intereses</p>
           {profile.interests.length === 0 ? (
@@ -242,9 +294,7 @@ export function MemberProfilePage() {
         <EditModal
           profile={profile}
           onClose={() => setEditOpen(false)}
-          onSave={({ maxHours, abilities, interests }) =>
-            setProfile(p => ({ ...p, maxHours, abilities, interests }))
-          }
+          onSave={handleSave}
         />
       )}
     </div>

@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { notifications, userProfile as initialProfile } from './mockData';
+import { useState, useEffect } from 'react';
+import { notifications } from './mockData';
+import { useAuth } from '../context/AuthContext';
+import { getUserDetail, updateMemberProfile } from '../services/profileService';
 
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
@@ -9,6 +11,23 @@ const INPUT_BG = '#1A2235';
 interface Props {
   initialTab?: 'profile' | 'notifications';
 }
+
+interface Profile {
+  id: number;
+  name: string;
+  email: string;
+  position: string;
+  role: string;
+  initials: string;
+  maxHours: number;
+  activeHours: number;
+  abilities: string[];
+  interests: string[];
+  taskStatusCounts: { toDoCount: number; inProgressCount: number; doneCount: number };
+}
+
+const getInitials = (name: string) =>
+  name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
 // ─── Pill component ───────────────────────────────────────────────────────────
 
@@ -59,8 +78,7 @@ function ChipInput({ chips, onChange, placeholder, color }: { chips: string[]; o
             flex: 1, backgroundColor: INPUT_BG,
             border: `1px solid ${focused ? color : 'rgba(255,255,255,0.07)'}`,
             borderRadius: '8px', padding: '7px 11px', color: 'white', fontSize: '12px', outline: 'none',
-            boxSizing: 'border-box' as const, transition: 'border-color 0.18s',
-            boxShadow: focused ? `0 0 0 3px ${color}15` : 'none'
+            boxSizing: 'border-box' as const, transition: 'border-color 0.18s'
           }}
         />
         <button onClick={add}
@@ -86,15 +104,16 @@ function EmptyState({ message }: { message: string }) {
 // ─── Edit Profile Modal ───────────────────────────────────────────────────────
 
 function EditProfileModal({ profile, onClose, onSave }: {
-  profile: typeof initialProfile;
+  profile: Profile;
   onClose: () => void;
-  onSave: (p: { abilities: string[]; interests: string[]; maxHours: number }) => void;
+  onSave: (p: { abilities: string[]; interests: string[]; maxHours: number }) => Promise<void>;
 }) {
   const [abilities, setAbilities] = useState<string[]>([...profile.abilities]);
   const [interests, setInterests] = useState<string[]>([...profile.interests]);
   const [maxHours, setMaxHours] = useState(profile.maxHours);
   const [loading, setLoading] = useState(false);
   const [hoursFocused, setHoursFocused] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const hasChanges = JSON.stringify(abilities) !== JSON.stringify(profile.abilities)
     || JSON.stringify(interests) !== JSON.stringify(profile.interests)
@@ -105,10 +124,18 @@ function EditProfileModal({ profile, onClose, onSave }: {
     onClose();
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!hasChanges) return;
     setLoading(true);
-    setTimeout(() => { onSave({ abilities, interests, maxHours }); setLoading(false); onClose(); }, 900);
+    setSaveError(null);
+    try {
+      await onSave({ abilities, interests, maxHours });
+      onClose();
+    } catch {
+      setSaveError('No se pudo guardar el perfil.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -124,7 +151,6 @@ function EditProfileModal({ profile, onClose, onSave }: {
           </button>
         </div>
         <div style={{ padding: '20px 22px' }} className="space-y-5">
-          {/* Non-editable info */}
           <div className="rounded-xl p-4" style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
             <p style={{ color: '#374151', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '10px' }}>Información no editable</p>
             <div className="grid grid-cols-2 gap-3">
@@ -142,10 +168,8 @@ function EditProfileModal({ profile, onClose, onSave }: {
             </div>
           </div>
 
-          {/* Divider */}
           <div style={{ height: '1px', backgroundColor: 'rgba(255,255,255,0.05)' }} />
 
-          {/* Max hours */}
           <div>
             <label style={{ color: '#6B7280', fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '7px' }}>Horas máximas disponibles</label>
             <div className="flex items-center gap-3">
@@ -164,19 +188,20 @@ function EditProfileModal({ profile, onClose, onSave }: {
             </div>
           </div>
 
-          {/* Abilities */}
           <div>
             <label style={{ color: '#6B7280', fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Habilidades</label>
             <ChipInput chips={abilities} onChange={setAbilities} placeholder="Agregar habilidad..." color={ACCENT} />
           </div>
 
-          {/* Interests */}
           <div>
             <label style={{ color: '#6B7280', fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>Intereses</label>
             <ChipInput chips={interests} onChange={setInterests} placeholder="Agregar interés..." color={PURPLE} />
           </div>
 
-          {/* Actions */}
+          {saveError && (
+            <p style={{ color: '#F59E0B', fontSize: '12px', textAlign: 'center' }}>{saveError}</p>
+          )}
+
           <div className="flex gap-3 pt-1">
             <button onClick={handleClose}
               style={{ flex: 1, padding: '10px', backgroundColor: 'rgba(255,255,255,0.04)', color: '#6B7280', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '9px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s' }}
@@ -211,7 +236,6 @@ function EditProfileModal({ profile, onClose, onSave }: {
   );
 }
 
-// Generic notification icon
 function NotifIcon({ read }: { read: boolean }) {
   return (
     <div style={{ width: '34px', height: '34px', borderRadius: '50%', backgroundColor: read ? 'rgba(75,85,104,0.15)' : 'rgba(91,141,239,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -225,19 +249,51 @@ function NotifIcon({ read }: { read: boolean }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ProfileNotifications({ initialTab = 'profile' }: Props) {
-  const [profile, setProfile] = useState(initialProfile);
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
   const [notifList, setNotifList] = useState(notifications);
   const [notifSearch, setNotifSearch] = useState('');
 
+  useEffect(() => {
+    if (!user) return;
+    setLoadingProfile(true);
+    getUserDetail(user.id)
+      .then(data => {
+        setProfile({
+          id: data.id,
+          name: data.name,
+          email: data.email,
+          position: data.position,
+          role: data.role,
+          initials: getInitials(data.name),
+          maxHours: data.profile.maxHours,
+          activeHours: data.profile.activeHours,
+          abilities: data.profile.abilities,
+          interests: data.profile.interests,
+          taskStatusCounts: data.taskStatusCounts,
+        });
+        setLoadError(null);
+      })
+      .catch((err) => {
+  console.error('ERROR REAL:', err);
+  setLoadError('No se pudo cargar el perfil.');
+})
+
+      .finally(() => setLoadingProfile(false));
+  }, [user]);
+
   const unread = notifList.filter(n => !n.read).length;
   const markAllRead = () => setNotifList(prev => prev.map(n => ({ ...n, read: true })));
   const markRead = (id: number) => setNotifList(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  const handleSave = (data: { abilities: string[]; interests: string[]; maxHours: number }) => setProfile(p => ({ ...p, ...data }));
 
-  const saturation = profile.activeHours / profile.maxHours;
-  const isOverload = saturation > 0.8;
-  const { toDoCount, inProgressCount, doneCount } = profile.taskStatusCounts;
+  const handleSave = async (data: { abilities: string[]; interests: string[]; maxHours: number }) => {
+    if (!profile) return;
+    await updateMemberProfile(profile.id, data);
+    setProfile(p => p ? { ...p, ...data } : p);
+  };
 
   const filteredNotifs = notifList.filter(n =>
     !notifSearch || n.title.toLowerCase().includes(notifSearch.toLowerCase()) || n.message.toLowerCase().includes(notifSearch.toLowerCase())
@@ -258,7 +314,6 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
           )}
         </div>
 
-        {/* Search bar */}
         <div style={{ position: 'relative', marginBottom: '16px', maxWidth: '380px' }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
             style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>
@@ -304,6 +359,18 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
   }
 
   // Profile view (no tabs)
+  if (loadingProfile) {
+    return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando perfil...</div>;
+  }
+  if (loadError) {
+    return <div className="p-6" style={{ color: '#F59E0B', fontSize: '13px' }}>{loadError}</div>;
+  }
+  if (!profile) return null;
+
+  const saturation = profile.activeHours / profile.maxHours;
+  const isOverload = saturation > 0.8;
+  const { toDoCount, inProgressCount, doneCount } = profile.taskStatusCounts;
+
   return (
     <div className="p-6">
       <div className="flex items-start justify-between mb-5">
@@ -311,7 +378,6 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
       </div>
 
       <div className="space-y-5">
-        {/* Profile info card */}
         <div className="rounded-xl p-5" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
@@ -339,7 +405,6 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
         </div>
 
         <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
-          {/* Availability */}
           <div className="rounded-xl p-5" style={{ backgroundColor: CARD_BG, border: `1px solid ${isOverload ? 'rgba(245,158,11,0.25)' : 'rgba(255,255,255,0.06)'}` }}>
             <div className="flex items-center justify-between mb-2">
               <h3 style={{ color: 'white', fontSize: '14px', fontWeight: '600' }}>Disponibilidad</h3>
@@ -352,7 +417,6 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
             <p style={{ color: isOverload ? '#F59E0B' : ACCENT, fontSize: '16px', fontWeight: '800' }}>{profile.activeHours} / {profile.maxHours}h</p>
           </div>
 
-          {/* Task summary */}
           <div className="rounded-xl p-5" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)' }}>
             <h3 style={{ color: 'white', fontSize: '14px', fontWeight: '600', marginBottom: '14px' }}>Resumen de tareas</h3>
             <div className="space-y-3">
@@ -373,7 +437,6 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
           </div>
         </div>
 
-        {/* Abilities */}
         <div className="rounded-xl p-5" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)' }}>
           <h3 style={{ color: 'white', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Habilidades</h3>
           {profile.abilities.length === 0 ? (
@@ -385,7 +448,6 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
           )}
         </div>
 
-        {/* Interests */}
         <div className="rounded-xl p-5" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)' }}>
           <h3 style={{ color: 'white', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Intereses</h3>
           {profile.interests.length === 0 ? (
