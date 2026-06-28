@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { teamMembers } from './mockData';
+import { CandidateProfileResource } from '../services/assignmentService';
 
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
@@ -8,8 +8,19 @@ const INPUT_BG = '#1A2235';
 
 interface Props {
   taskTitle: string;
+  candidates: CandidateProfileResource[];
+  members: Array<{
+    id: number;
+    name: string;
+    initials: string;
+    color: string;
+    role?: string;
+    position?: string;
+  }>;
+  loading: boolean;
+  error: string | null;
   onClose: () => void;
-  onConfirm: (memberName: string) => void;
+  onConfirm: (memberId: number) => void;
 }
 
 function CircularProgress({ percent, color, label }: { percent: number; color: string; label: string }) {
@@ -33,19 +44,15 @@ function CircularProgress({ percent, color, label }: { percent: number; color: s
   );
 }
 
-const candidates = [
-  { memberId: 1, match: 94, skillMatch: 92, expMatch: 88, interestMatch: 96, totalScore: 94 },
-  { memberId: 3, match: 78, skillMatch: 75, expMatch: 82, interestMatch: 70, totalScore: 78 },
-  { memberId: 2, match: 65, skillMatch: 60, expMatch: 70, interestMatch: 68, totalScore: 65 },
-];
+const toPercent = (value: number, max: number) => max > 0 ? Math.round(Math.max(0, Math.min(1, value / max)) * 100) : 0;
 
-export function AIAssignmentModal({ taskTitle, onClose, onConfirm }: Props) {
+export function AIAssignmentModal({ taskTitle, candidates, members, loading, error, onClose, onConfirm }: Props) {
   const [step, setStep] = useState<'candidates' | 'confirm'>('candidates');
-  const [selectedCandidate, setSelectedCandidate] = useState<typeof candidates[0] | null>(null);
+  const [selectedCandidate, setSelectedCandidate] = useState<CandidateProfileResource | null>(null);
 
-  const getMember = (id: number) => teamMembers.find(m => m.id === id)!;
+  const getMember = (id: number) => members.find(m => m.id === id);
 
-  const handleSelect = (c: typeof candidates[0]) => {
+  const handleSelect = (c: CandidateProfileResource) => {
     setSelectedCandidate(c);
     setStep('confirm');
   };
@@ -75,12 +82,17 @@ export function AIAssignmentModal({ taskTitle, onClose, onConfirm }: Props) {
           {step === 'candidates' && (
             <div className="space-y-3">
               <p style={{ color: '#9CA3AF', fontSize: '12px', marginBottom: '12px' }}>Los 3 mejores candidatos según habilidades, experiencia y carga actual:</p>
+              {loading && <p style={{ color: '#6B7280', fontSize: '13px' }}>Cargando recomendación...</p>}
+              {error && <p style={{ color: '#EF4444', fontSize: '12px' }}>{error}</p>}
+              {!loading && !error && candidates.length === 0 && <p style={{ color: '#6B7280', fontSize: '13px' }}>No hay candidatos disponibles.</p>}
               {candidates.map((c, idx) => {
-                const member = getMember(c.memberId);
+                const member = getMember(c.userId);
+                if (!member) return null;
                 const isTop = idx === 0;
+                const match = toPercent(c.availableHours, c.maxHours);
                 return (
                   <div
-                    key={c.memberId}
+                    key={c.userId}
                     style={{
                       backgroundColor: isTop ? 'rgba(91,141,239,0.08)' : INPUT_BG,
                       border: `1px solid ${isTop ? 'rgba(91,141,239,0.3)' : 'rgba(255,255,255,0.06)'}`,
@@ -101,22 +113,22 @@ export function AIAssignmentModal({ taskTitle, onClose, onConfirm }: Props) {
                         </div>
                         <div>
                           <p style={{ color: 'white', fontSize: '13px', fontWeight: '600' }}>{member.name}</p>
-                          <p style={{ color: '#6B7280', fontSize: '11px' }}>{member.role}</p>
+                          <p style={{ color: '#6B7280', fontSize: '11px' }}>{member.position ?? member.role ?? 'Miembro'}</p>
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <p style={{ color: isTop ? ACCENT : '#9CA3AF', fontSize: '18px', fontWeight: '700' }}>{c.match}%</p>
-                        <p style={{ color: '#4B5563', fontSize: '10px' }}>coincidencia</p>
+                        <p style={{ color: isTop ? ACCENT : '#9CA3AF', fontSize: '18px', fontWeight: '700' }}>{match}%</p>
+                        <p style={{ color: '#4B5563', fontSize: '10px' }}>disponible</p>
                       </div>
                     </div>
                     {/* Hours bar */}
                     <div style={{ marginTop: '10px' }}>
                       <div className="flex justify-between mb-1">
                         <span style={{ color: '#6B7280', fontSize: '11px' }}>Horas disponibles</span>
-                        <span style={{ color: '#9CA3AF', fontSize: '11px' }}>{member.hoursMax - member.hoursUsed} / {member.hoursMax} hrs</span>
+                        <span style={{ color: '#9CA3AF', fontSize: '11px' }}>{c.availableHours} / {c.maxHours} hrs</span>
                       </div>
                       <div style={{ height: '5px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${((member.hoursMax - member.hoursUsed) / member.hoursMax) * 100}%`, backgroundColor: member.color, borderRadius: '999px' }} />
+                        <div style={{ height: '100%', width: `${match}%`, backgroundColor: member.color, borderRadius: '999px' }} />
                       </div>
                     </div>
                     <button
@@ -138,7 +150,10 @@ export function AIAssignmentModal({ taskTitle, onClose, onConfirm }: Props) {
           )}
 
           {step === 'confirm' && selectedCandidate && (() => {
-            const member = getMember(selectedCandidate.memberId);
+            const member = getMember(selectedCandidate.userId);
+            if (!member) return null;
+            const availableScore = toPercent(selectedCandidate.availableHours, selectedCandidate.maxHours);
+            const workloadScore = 100 - toPercent(selectedCandidate.activeHours, selectedCandidate.maxHours);
             return (
               <div>
                 <div className="flex items-center gap-3 mb-5 p-3 rounded-xl" style={{ backgroundColor: INPUT_BG }}>
@@ -147,20 +162,20 @@ export function AIAssignmentModal({ taskTitle, onClose, onConfirm }: Props) {
                   </div>
                   <div>
                     <p style={{ color: 'white', fontSize: '15px', fontWeight: '700' }}>{member.name}</p>
-                    <p style={{ color: '#6B7280', fontSize: '12px' }}>{member.role}</p>
+                    <p style={{ color: '#6B7280', fontSize: '12px' }}>{member.position ?? member.role ?? 'Miembro'}</p>
                   </div>
                   <div className="ml-auto">
                     <span style={{ backgroundColor: 'rgba(91,141,239,0.15)', color: ACCENT, fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '999px' }}>
-                      {selectedCandidate.totalScore}% idóneo
+                      {availableScore}% disponible
                     </span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 mb-5" style={{ justifyItems: 'center' }}>
-                  <CircularProgress percent={selectedCandidate.skillMatch} color={ACCENT} label="Coincidencia de Habilidades" />
-                  <CircularProgress percent={selectedCandidate.expMatch} color={PURPLE} label="Coincidencia de Experiencia" />
-                  <CircularProgress percent={selectedCandidate.interestMatch} color="#10B981" label="Coincidencia de Intereses" />
-                  <CircularProgress percent={selectedCandidate.totalScore} color="#F59E0B" label="Puntuación Total de Idoneidad" />
+                  <CircularProgress percent={availableScore} color={ACCENT} label="Disponibilidad" />
+                  <CircularProgress percent={workloadScore} color={PURPLE} label="Carga libre" />
+                  <CircularProgress percent={toPercent(selectedCandidate.activeHours, selectedCandidate.maxHours)} color="#10B981" label="Horas activas" />
+                  <CircularProgress percent={availableScore} color="#F59E0B" label="Puntuación de recomendación" />
                 </div>
 
                 <div className="flex gap-3">
@@ -171,7 +186,7 @@ export function AIAssignmentModal({ taskTitle, onClose, onConfirm }: Props) {
                     ← Volver
                   </button>
                   <button
-                    onClick={() => { onConfirm(member.name); onClose(); }}
+                    onClick={() => { onConfirm(member.id); onClose(); }}
                     style={{ flex: 2, padding: '10px', backgroundColor: ACCENT, color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
                   >
                     Confirmar asignación de tarea

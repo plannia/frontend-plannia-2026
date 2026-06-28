@@ -4,6 +4,7 @@ import { MisTareas } from './MisTareas';
 import { TeamPlanner } from './TeamPlanner';
 import { MemberProfilePage } from './MemberProfilePage';
 import { notifications as initialNotifs, categories } from './mockData';
+import { useAuth } from '../context/AuthContext';
 
 const BG = '#0F1419';
 const SIDEBAR_BG = '#1A2235';
@@ -18,8 +19,6 @@ interface Props {
 }
 
 const MEMBER_ID = 1; // Ana García
-const MEMBER_NAME = 'Ana García';
-const MEMBER_INITIALS = 'AG';
 const memberCategoryNames = categories.filter(c => c.memberIds.includes(MEMBER_ID)).map(c => c.name);
 
 const navItems: { page: MemberPage; label: string; icon: React.ReactNode }[] = [
@@ -138,6 +137,7 @@ function NotificationsPage({ notifs, onMarkRead }: { notifs: typeof initialNotif
 }
 
 export function MemberAppLayout({ onLogout }: Props) {
+  const { user } = useAuth();
   const [page, setPage] = useState<MemberPage>('dashboard');
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -152,6 +152,8 @@ export function MemberAppLayout({ onLogout }: Props) {
   const unreadCount = notifs.filter(n => !n.read).length;
   const markAllRead = () => setNotifs(prev => prev.map(n => ({ ...n, read: true })));
   const markOneRead = (id: number) => setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  const memberName = user?.name ?? 'Usuario';
+  const memberInitials = memberName.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) || 'US';
 
   const renderPage = () => {
     switch (page) {
@@ -331,10 +333,10 @@ export function MemberAppLayout({ onLogout }: Props) {
                 onMouseLeave={e => { if (!profileOpen) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
               >
                 <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` }}>
-                  <span style={{ color: 'white', fontSize: '10px', fontWeight: '800' }}>{MEMBER_INITIALS}</span>
+                  <span style={{ color: 'white', fontSize: '10px', fontWeight: '800' }}>{memberInitials}</span>
                 </div>
                 <div style={{ textAlign: 'left' }}>
-                  <p style={{ color: 'white', fontSize: '12px', fontWeight: '600', lineHeight: '1.2' }}>{MEMBER_NAME}</p>
+                  <p style={{ color: 'white', fontSize: '12px', fontWeight: '600', lineHeight: '1.2' }}>{memberName}</p>
                   <p style={{ color: PURPLE, fontSize: '10px', lineHeight: '1.2' }}>Miembro</p>
                 </div>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -355,10 +357,10 @@ export function MemberAppLayout({ onLogout }: Props) {
                   <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` }}>
-                        <span style={{ color: 'white', fontSize: '11px', fontWeight: '800' }}>{MEMBER_INITIALS}</span>
+                        <span style={{ color: 'white', fontSize: '11px', fontWeight: '800' }}>{memberInitials}</span>
                       </div>
                       <div>
-                        <p style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{MEMBER_NAME}</p>
+                        <p style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{memberName}</p>
                         <p style={{ color: '#6B7280', fontSize: '11px' }}>Miembro · Plannia</p>
                       </div>
                     </div>

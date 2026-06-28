@@ -1,9 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { getMemberProfileByUserId, updateMemberProfile } from '../services/memberProfileService';
+import { getUserById } from '../services/userService';
 import { memberProfile } from './mockData';
 
 const CARD_BG = '#141C2B';
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
+const splitTags = (value?: string) => (value ?? '').split(',').map(tag => tag.trim()).filter(Boolean);
+const joinTags = (value: string[]) => value.map(tag => tag.trim()).filter(Boolean).join(', ');
+const initials = (name: string) => name.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) || 'US';
 
 function Pill({ text, color, onRemove }: { text: string; color: string; onRemove?: () => void }) {
   return (
@@ -56,7 +62,7 @@ function ChipInput({ value, onChange, color, placeholder }: { value: string[]; o
 function EditModal({ profile, onClose, onSave }: {
   profile: typeof memberProfile;
   onClose: () => void;
-  onSave: (data: { maxHours: number; abilities: string[]; interests: string[] }) => void;
+  onSave: (data: { maxHours: number; abilities: string[]; interests: string[] }) => Promise<void>;
 }) {
   const [maxHours, setMaxHours] = useState(profile.maxHours);
   const [abilities, setAbilities] = useState<string[]>([...profile.abilities]);
@@ -119,7 +125,7 @@ function EditModal({ profile, onClose, onSave }: {
               Cancelar
             </button>
             <button
-              onClick={() => { onSave({ maxHours, abilities, interests }); onClose(); }}
+              onClick={async () => { await onSave({ maxHours, abilities, interests }); onClose(); }}
               style={{ padding: '9px 18px', borderRadius: '9px', border: 'none', background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', boxShadow: `0 4px 14px ${ACCENT}30` }}
             >
               Guardar cambios
@@ -132,8 +138,71 @@ function EditModal({ profile, onClose, onSave }: {
 }
 
 export function MemberProfilePage() {
+  const { user } = useAuth();
   const [profile, setProfile] = useState(memberProfile);
   const [editOpen, setEditOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadProfile = async () => {
+    if (!user?.id) return;
+    try {
+      setLoading(true);
+      setError(null);
+      const [userData, profileData] = await Promise.all([
+        getUserById(user.id),
+        getMemberProfileByUserId(user.id),
+      ]);
+      setProfile({
+        name: userData.name,
+        email: userData.email,
+        position: userData.position,
+        role: userData.role === 'LEADER' ? 'Lider' : 'Miembro',
+        initials: initials(userData.name),
+        maxHours: profileData.maxHours,
+        activeHours: profileData.activeHours,
+        abilities: splitTags(profileData.abilities),
+        interests: splitTags(profileData.interests),
+        taskStatusCounts: userData.taskStatusCounts ?? { toDoCount: 0, inProgressCount: 0, doneCount: 0 },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al cargar perfil');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProfile();
+  }, [user?.id]);
+
+  const handleSave = async ({ maxHours, abilities, interests }: { maxHours: number; abilities: string[]; interests: string[] }) => {
+    if (!user?.id) return;
+    try {
+      setSaving(true);
+      setError(null);
+      const updated = await updateMemberProfile(user.id, {
+        maxHours,
+        abilities: joinTags(abilities),
+        interests: joinTags(interests),
+      });
+      setProfile(p => ({
+        ...p,
+        maxHours: updated.maxHours,
+        activeHours: updated.activeHours,
+        abilities: splitTags(updated.abilities),
+        interests: splitTags(updated.interests),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar perfil');
+      throw err;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="p-6" style={{ color: '#6B7280' }}>Cargando perfil...</div>;
 
   const hoursPercent = Math.min(100, Math.round((profile.activeHours / profile.maxHours) * 100));
   const hoursColor = hoursPercent > 80 ? '#F59E0B' : ACCENT;
@@ -142,6 +211,11 @@ export function MemberProfilePage() {
 
   return (
     <div className="p-6">
+      {error && (
+        <div style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#FCA5A5', fontSize: '13px' }}>
+          {error}
+        </div>
+      )}
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 style={{ color: 'white', fontSize: '22px', fontWeight: '700', marginBottom: '3px' }}>Mi Perfil</h1>
@@ -149,6 +223,7 @@ export function MemberProfilePage() {
         </div>
         <button
           onClick={() => setEditOpen(true)}
+          disabled={saving}
           style={{
             display: 'flex', alignItems: 'center', gap: '6px',
             padding: '8px 16px', borderRadius: '9px', border: `1px solid rgba(91,141,239,0.3)`,
@@ -158,7 +233,7 @@ export function MemberProfilePage() {
           onMouseLeave={e => { e.currentTarget.style.backgroundColor = `${ACCENT}10`; }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
-          Editar perfil
+          {saving ? 'Guardando...' : 'Editar perfil'}
         </button>
       </div>
 
@@ -242,9 +317,7 @@ export function MemberProfilePage() {
         <EditModal
           profile={profile}
           onClose={() => setEditOpen(false)}
-          onSave={({ maxHours, abilities, interests }) =>
-            setProfile(p => ({ ...p, maxHours, abilities, interests }))
-          }
+          onSave={handleSave}
         />
       )}
     </div>

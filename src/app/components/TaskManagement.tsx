@@ -1,5 +1,11 @@
-import { useState } from 'react';
-import { tasks as initialTasks, teamMembers, categories, Task, TaskStatus, TaskUrgency } from './mockData';
+import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { getCategoriesByTeam } from '../services/categoryService';
+import { getDashboardTasks } from '../services/dashboardService';
+import { getTeamById } from '../services/teamService';
+import { getAssignmentCandidates, confirmAssignmentRecommendation, CandidateProfileResource } from '../services/assignmentService';
+import { createTask, getTasksByTeam, TaskResource, updateTask } from '../services/taskService';
+import { Task, TaskStatus, TaskUrgency } from './mockData';
 import { AIAssignmentModal } from './AIAssignmentModal';
 
 const ACCENT = '#5B8DEF';
@@ -27,35 +33,95 @@ const FIELD_STYLE: React.CSSProperties = {
   fontSize: '13px', boxSizing: 'border-box', transition: 'border-color 0.15s'
 };
 
+interface CategoryOption {
+  id: number;
+  name: string;
+  color?: string;
+}
+
+interface TeamMemberOption {
+  id: number;
+  name: string;
+  email: string;
+  position?: string;
+  role?: string;
+  color: string;
+  initials: string;
+  hoursUsed: number;
+  hoursMax: number;
+}
+
+const COLORS = ['#5B8DEF', '#7C6FE8', '#10B981', '#F59E0B', '#EC4899', '#EF4444'];
+
+const getInitials = (name: string) => name.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) || 'US';
+const splitList = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
+
+const statusFromApi = (status: string): TaskStatus => {
+  if (status === 'IN_PROGRESS') return 'En progreso';
+  if (status === 'DONE') return 'Completada';
+  return 'Pendiente';
+};
+
+const statusToApi = (status: TaskStatus) => {
+  if (status === 'En progreso') return 'IN_PROGRESS';
+  if (status === 'Completada') return 'DONE';
+  return 'TO_DO';
+};
+
+const priorityFromApi = (priority: string): TaskUrgency => {
+  if (priority === 'HIGH') return 'Alta';
+  if (priority === 'LOW') return 'Baja';
+  return 'Media';
+};
+
+const priorityToApi = (priority: TaskUrgency) => {
+  if (priority === 'Alta' || priority === 'Crítica') return 'HIGH';
+  if (priority === 'Baja') return 'LOW';
+  return 'MEDIUM';
+};
+
+const difficultyFromApi = (difficulty: string) => {
+  if (difficulty === 'EASY') return 'Fácil';
+  if (difficulty === 'HARD') return 'Difícil';
+  return 'Media';
+};
+
+const difficultyToApi = (difficulty: string) => {
+  if (difficulty === 'Fácil') return 'EASY';
+  if (difficulty === 'Difícil') return 'HARD';
+  return 'MEDIUM';
+};
+
+const toDateInput = (value?: string) => value ? value.split('T')[0] : '';
+const toIsoDateTime = (value: string) => new Date(`${value}T23:59:00`).toISOString();
+
 // ─── Assign Member Modal ──────────────────────────────────────────────────────
 
 interface AssignModalProps {
   task: Task;
+  members: TeamMemberOption[];
+  candidates: CandidateProfileResource[];
+  loading: boolean;
+  error: string | null;
   onClose: () => void;
-  onAssign: (memberName: string) => void;
+  onAssign: (memberId: number) => void;
 }
 
-function AssignMemberModal({ task, onClose, onAssign }: AssignModalProps) {
+function AssignMemberModal({ task, members, candidates, loading, error, onClose, onAssign }: AssignModalProps) {
   const [selected, setSelected] = useState<number | null>(null);
 
-  // Sort members: lower hours used first (more available), then by skill overlap
-  const getAffinity = (memberId: number) => {
-    const m = teamMembers.find(x => x.id === memberId)!;
-    const availability = 1 - m.hoursUsed / m.hoursMax;
-    const catMatch = task.category.toLowerCase();
-    const skillMatch = m.skills.some(s => catMatch.includes(s.toLowerCase()) || s.toLowerCase().includes(catMatch.split(' ')[0].toLowerCase())) ? 0.2 : 0;
-    return Math.round((availability * 0.7 + skillMatch + Math.random() * 0.1) * 100);
-  };
-
-  const membersWithAffinity = teamMembers.map(m => ({ ...m, affinity: getAffinity(m.id) })).sort((a, b) => b.affinity - a.affinity);
+  const membersWithAffinity = members.map(member => {
+    const candidate = candidates.find(c => c.userId === member.id);
+    const availability = member.hoursMax > 0 ? Math.max(0, Math.min(1, (candidate?.availableHours ?? (member.hoursMax - member.hoursUsed)) / member.hoursMax)) : 0;
+    return { ...member, candidate, affinity: Math.round(availability * 100) };
+  }).sort((a, b) => b.affinity - a.affinity);
 
   const recommended = membersWithAffinity.slice(0, 2);
   const others = membersWithAffinity.slice(2);
 
   const handleConfirm = () => {
     if (selected === null) return;
-    const m = teamMembers.find(x => x.id === selected);
-    if (m) onAssign(m.name);
+    onAssign(selected);
     onClose();
   };
 
@@ -116,9 +182,9 @@ function AssignMemberModal({ task, onClose, onAssign }: AssignModalProps) {
           <span style={{ color: avail > 10 ? '#10B981' : avail > 4 ? '#F59E0B' : '#EF4444', fontSize: '11px', fontWeight: '600' }}>{avail}h libres</span>
         </div>
 
-        {/* Skills */}
+        {/* Profile */}
         <div className="flex flex-wrap gap-1">
-          {member.skills.slice(0, 3).map(s => (
+          {[member.position, member.role].filter(Boolean).map(s => (
             <span key={s} style={{ backgroundColor: `${member.color}12`, border: `1px solid ${member.color}28`, color: member.color, fontSize: '10px', padding: '1px 7px', borderRadius: '999px' }}>{s}</span>
           ))}
         </div>
@@ -148,6 +214,8 @@ function AssignMemberModal({ task, onClose, onAssign }: AssignModalProps) {
 
         {/* Content */}
         <div style={{ overflowY: 'auto', padding: '16px 22px', flex: 1 }}>
+          {loading && <p style={{ color: '#6B7280', fontSize: '13px', marginBottom: '12px' }}>Cargando candidatos...</p>}
+          {error && <p style={{ color: '#EF4444', fontSize: '12px', marginBottom: '12px' }}>{error}</p>}
           {/* Recommended section */}
           <div style={{ marginBottom: '20px' }}>
             <div className="flex items-center gap-2 mb-3">
@@ -283,15 +351,17 @@ function EditTaskModal({ task, onClose, onSave }: {
 
 // ─── Task Details Drawer ──────────────────────────────────────────────────────
 
-function TaskDetailDrawer({ task, onClose, onStatusChange, onAssignClick, onEditClick }: {
+function TaskDetailDrawer({ task, categories, members, onClose, onStatusChange, onAssignClick, onEditClick }: {
   task: Task;
+  categories: CategoryOption[];
+  members: TeamMemberOption[];
   onClose: () => void;
   onStatusChange: (id: number, s: TaskStatus) => void;
   onAssignClick: () => void;
   onEditClick: () => void;
 }) {
   const cat = categories.find(c => c.name === task.category);
-  const member = teamMembers.find(m => m.name === task.assignedTo);
+  const member = members.find(m => m.name === task.assignedTo);
   const uc = urgencyColors[task.urgency] ?? urgencyColors['Media'];
 
   return (
@@ -446,7 +516,14 @@ function TaskDetailDrawer({ task, onClose, onStatusChange, onAssignClick, onEdit
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function TaskManagement() {
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const { user } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [apiTasks, setApiTasks] = useState<TaskResource[]>([]);
+  const [dashboardTasks, setDashboardTasks] = useState<any[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -456,11 +533,89 @@ export function TaskManagement() {
   const [showEdit, setShowEdit] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignmentCandidates, setAssignmentCandidates] = useState<CandidateProfileResource[]>([]);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState('');
   const [form, setForm] = useState({
     title: '', description: '', category: '', hours: '',
     priority: 'Media' as TaskUrgency, difficulty: 'Media', tools: '', knowledge: '', dueDate: ''
   });
+
+  const categoryById = useMemo(() => new Map(categories.map(category => [category.id, category])), [categories]);
+  const memberById = useMemo(() => new Map(teamMembers.map(member => [member.id, member])), [teamMembers]);
+
+  const mapTask = (task: TaskResource): Task => {
+    const dashboardTask = dashboardTasks.find(item => item.taskId === task.id);
+    const assignment = (task as any).assignment ?? (task as any).assignedUser ?? null;
+    const userId = assignment?.userId ?? (task as any).userId;
+    const member = userId ? memberById.get(userId) : undefined;
+    return {
+      id: task.id,
+      title: task.title,
+      description: task.description ?? '',
+      category: categoryById.get(task.categoryId)?.name ?? `Categoría ${task.categoryId}`,
+      status: statusFromApi(task.status),
+      assignedTo: dashboardTask?.userName ?? member?.name ?? '',
+      estimatedTime: `${task.hours ?? 0}h`,
+      urgency: priorityFromApi(task.priority),
+      difficulty: difficultyFromApi(task.difficulty),
+      tools: task.tools?.join(', ') ?? '',
+      knowledge: task.knowledge?.join(', ') ?? '',
+      dueDate: toDateInput(task.limitDate),
+    };
+  };
+
+  const loadData = async () => {
+    if (!user?.teamId) {
+      setLoading(false);
+      setError('No se encontró el equipo del usuario.');
+      return;
+    }
+    try {
+      setLoading(true);
+      setError(null);
+      const [categoryData, team, taskData, dashboardTaskData] = await Promise.all([
+        getCategoriesByTeam(user.teamId),
+        getTeamById(user.teamId),
+        getTasksByTeam(user.teamId),
+        getDashboardTasks(user.teamId),
+      ]);
+      const categoryOptions = categoryData.map((category: any, index: number) => ({
+        id: category.id,
+        name: category.name,
+        color: COLORS[index % COLORS.length],
+      }));
+      const memberOptions = (team.members ?? []).map((member: any, index: number) => ({
+        id: member.id,
+        name: member.name,
+        email: member.email,
+        position: member.position,
+        role: member.role,
+        color: COLORS[index % COLORS.length],
+        initials: getInitials(member.name),
+        hoursUsed: 0,
+        hoursMax: 40,
+      }));
+      setCategories(categoryOptions);
+      setTeamMembers(memberOptions);
+      setApiTasks(taskData);
+      setDashboardTasks(dashboardTaskData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al cargar tareas');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [user?.teamId]);
+
+  useEffect(() => {
+    setTasks(apiTasks.map(mapTask));
+  }, [apiTasks, dashboardTasks, categoryById, memberById]);
 
   const filtered = tasks.filter(t => {
     const q = search.toLowerCase();
@@ -474,47 +629,107 @@ export function TaskManagement() {
   const getMember = (name: string) => teamMembers.find(m => m.name === name);
   const selectedTask = selectedTaskId != null ? tasks.find(t => t.id === selectedTaskId) : null;
 
-  const handleStatusChange = (id: number, status: TaskStatus) => {
+  const loadAssignmentCandidates = async (taskId: number) => {
+    if (!user?.teamId) return;
+    try {
+      setAssignLoading(true);
+      setAssignmentError(null);
+      const candidates = await getAssignmentCandidates(taskId, user.teamId);
+      setAssignmentCandidates(candidates);
+      setTeamMembers(prev => prev.map(member => {
+        const candidate = candidates.find(c => c.userId === member.id);
+        return candidate ? { ...member, hoursUsed: candidate.activeHours, hoursMax: candidate.maxHours } : member;
+      }));
+    } catch (err) {
+      setAssignmentCandidates([]);
+      setAssignmentError(err instanceof Error ? err.message : 'Error al cargar candidatos');
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const handleStatusChange = async (id: number, status: TaskStatus) => {
+    const current = tasks.find(task => task.id === id);
+    if (!current) return;
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+    try {
+      const updated = await updateTask(id, { status: statusToApi(status), limitDate: toIsoDateTime(current.dueDate || new Date().toISOString().split('T')[0]) });
+      setApiTasks(prev => prev.map(task => task.id === id ? updated : task));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al actualizar estado');
+      await loadData();
+    }
   };
 
-  const handleAddTask = () => {
+  const handleAddTask = async () => {
     if (!form.title || !form.category || !form.dueDate) return;
-    const newTask: Task = {
-      id: tasks.length + 1, title: form.title, description: form.description,
-      category: form.category, status: 'Pendiente', assignedTo: '',
-      estimatedTime: form.hours ? `${form.hours}h` : '–', urgency: form.priority,
-      difficulty: form.difficulty, tools: form.tools, knowledge: form.knowledge, dueDate: form.dueDate,
-    };
-    setTasks(prev => [newTask, ...prev]);
-    setForm({ title: '', description: '', category: '', hours: '', priority: 'Media', difficulty: 'Media', tools: '', knowledge: '', dueDate: '' });
-    setShowModal(false);
+    const category = categories.find(c => c.name === form.category);
+    if (!category) return;
+    try {
+      setSaving(true);
+      const newTask = await createTask({
+        categoryId: category.id,
+        title: form.title.trim(),
+        description: form.description.trim(),
+        hours: Number(form.hours) || 1,
+        priority: priorityToApi(form.priority),
+        difficulty: difficultyToApi(form.difficulty),
+        limitDate: toIsoDateTime(form.dueDate),
+        tools: splitList(form.tools),
+        knowledge: splitList(form.knowledge),
+      });
+      setApiTasks(prev => [newTask, ...prev]);
+      setForm({ title: '', description: '', category: '', hours: '', priority: 'Media', difficulty: 'Media', tools: '', knowledge: '', dueDate: '' });
+      setShowModal(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al crear tarea');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleBulkAI = () => {
+  const handleBulkAI = async () => {
     const unassigned = tasks.filter(t => !t.assignedTo);
     if (unassigned.length === 0 || aiLoading) return;
-    setAiLoading(true);
-    setTimeout(() => {
-      const memberPool = teamMembers.slice().sort((a, b) => a.hoursUsed - b.hoursUsed);
-      setTasks(prev => prev.map(t => {
-        if (!t.assignedTo) {
-          const member = memberPool.find(m => m.hoursUsed < m.hoursMax) ?? memberPool[0];
-          return { ...t, assignedTo: member.name, status: 'En progreso' };
-        }
-        return t;
-      }));
+    try {
+      setAiLoading(true);
+      setError(null);
+      for (const task of unassigned) {
+        if (!user?.teamId) break;
+        const candidates = await getAssignmentCandidates(task.id, user.teamId);
+        const candidate = candidates[0];
+        if (candidate) await confirmAssignmentRecommendation(task.id, candidate.userId);
+      }
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al asignar tareas con IA');
+    } finally {
       setAiLoading(false);
-    }, 1800);
+    }
   };
 
-  const handleEditSave = (id: number, status: TaskStatus, dueDate: string) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, status, dueDate } : t));
+  const handleEditSave = async (id: number, status: TaskStatus, dueDate: string) => {
+    try {
+      setSaving(true);
+      const updated = await updateTask(id, { status: statusToApi(status), limitDate: toIsoDateTime(dueDate) });
+      setApiTasks(prev => prev.map(task => task.id === id ? updated : task));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al actualizar tarea');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleAssign = (memberName: string) => {
-    if (selectedTaskId !== null) {
-      setTasks(prev => prev.map(t => t.id === selectedTaskId ? { ...t, assignedTo: memberName, status: 'En progreso' } : t));
+  const handleAssign = async (memberId: number) => {
+    if (selectedTaskId === null) return;
+    try {
+      setAssignLoading(true);
+      await confirmAssignmentRecommendation(selectedTaskId, memberId);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al asignar tarea');
+    } finally {
+      setAssignLoading(false);
     }
   };
 
@@ -522,6 +737,8 @@ export function TaskManagement() {
     ...FIELD_STYLE,
     borderColor: focusedField === name ? ACCENT : 'rgba(255,255,255,0.07)'
   });
+
+  if (loading) return <div className="p-6" style={{ color: '#6B7280' }}>Cargando tareas...</div>;
 
   return (
     <div className="p-6">
@@ -547,7 +764,7 @@ export function TaskManagement() {
               <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
                 <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
                 Asignando...</>
-            ) : <><span>⚡</span> Asignación IA</>}
+            ) : <><span>⚡</span> Asignar con IA</>}
           </button>
           <button onClick={() => setShowModal(true)}
             style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: `linear-gradient(135deg, ${ACCENT}, #7C6FE8)`, border: 'none', borderRadius: '9px', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', boxShadow: `0 4px 14px ${ACCENT}30` }}>
@@ -555,6 +772,12 @@ export function TaskManagement() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <div style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#FCA5A5', fontSize: '13px' }}>
+          {error}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex gap-2.5 mb-5">
@@ -625,7 +848,7 @@ export function TaskManagement() {
                       </div>
                     ) : (
                       <button
-                        onClick={e => { e.stopPropagation(); setSelectedTaskId(task.id); setShowAssign(true); }}
+                        onClick={e => { e.stopPropagation(); setSelectedTaskId(task.id); setShowAssign(true); loadAssignmentCandidates(task.id); }}
                         style={{
                           display: 'inline-flex', alignItems: 'center', gap: '5px',
                           padding: '4px 10px', borderRadius: '6px',
@@ -667,16 +890,26 @@ export function TaskManagement() {
       {selectedTask && (
         <TaskDetailDrawer
           task={selectedTask}
+          categories={categories}
+          members={teamMembers}
           onClose={() => setSelectedTaskId(null)}
           onStatusChange={handleStatusChange}
-          onAssignClick={() => setShowAssign(true)}
+          onAssignClick={() => { setShowAssign(true); loadAssignmentCandidates(selectedTask.id); }}
           onEditClick={() => setShowEdit(true)}
         />
       )}
 
       {/* Assign Modal */}
       {showAssign && selectedTask && (
-        <AssignMemberModal task={selectedTask} onClose={() => setShowAssign(false)} onAssign={handleAssign} />
+        <AssignMemberModal
+          task={selectedTask}
+          members={teamMembers}
+          candidates={assignmentCandidates}
+          loading={assignLoading}
+          error={assignmentError}
+          onClose={() => setShowAssign(false)}
+          onAssign={handleAssign}
+        />
       )}
 
       {/* New Task Modal */}
@@ -765,7 +998,7 @@ export function TaskManagement() {
                 <button onClick={() => setShowModal(false)} style={{ flex: 1, padding: '10px', backgroundColor: 'rgba(255,255,255,0.04)', color: '#6B7280', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '9px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
                   Cancelar
                 </button>
-                <button onClick={handleAddTask} disabled={!form.title || !form.category || !form.dueDate}
+                <button onClick={handleAddTask} disabled={!form.title || !form.category || !form.dueDate || saving}
                   style={{
                     flex: 2, padding: '10px',
                     background: (!form.title || !form.category || !form.dueDate) ? undefined : `linear-gradient(135deg, ${ACCENT}, #7C6FE8)`,
@@ -775,7 +1008,7 @@ export function TaskManagement() {
                     cursor: (!form.title || !form.category || !form.dueDate) ? 'not-allowed' : 'pointer',
                     fontSize: '13px', fontWeight: '700', transition: 'opacity 0.2s'
                   }}>
-                  Crear Tarea
+                  {saving ? 'Creando...' : 'Crear Tarea'}
                 </button>
               </div>
             </div>
@@ -789,9 +1022,15 @@ export function TaskManagement() {
       )}
 
       {showAI && selectedTask && (
-        <AIAssignmentModal taskTitle={selectedTask.title} onClose={() => setShowAI(false)} onConfirm={(name) => {
-          setTasks(prev => prev.map(t => t.id === selectedTaskId ? { ...t, assignedTo: name, status: 'En progreso' } : t));
-        }} />
+        <AIAssignmentModal
+          taskTitle={selectedTask.title}
+          candidates={assignmentCandidates}
+          members={teamMembers}
+          loading={assignLoading}
+          error={assignmentError}
+          onClose={() => setShowAI(false)}
+          onConfirm={handleAssign}
+        />
       )}
     </div>
   );

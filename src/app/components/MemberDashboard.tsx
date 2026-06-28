@@ -1,4 +1,5 @@
 import React from 'react';
+import { useAuth } from '../context/AuthContext';
 import { tasks, categories } from './mockData';
 
 const BG = '#0F1419';
@@ -59,6 +60,7 @@ function StatCard({ label, count, color, icon }: { label: string; count: number;
 }
 
 export function MemberDashboard() {
+  const { user } = useAuth();
   const pendiente = anaTasks.filter(t => t.status === 'Pendiente').length;
   const enProgreso = anaTasks.filter(t => t.status === 'En progreso').length;
   const completada = anaTasks.filter(t => t.status === 'Completada').length;
@@ -69,7 +71,7 @@ export function MemberDashboard() {
       <div className="flex items-center gap-3 mb-6">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <h1 style={{ color: 'white', fontSize: '24px', fontWeight: '800' }}>Hola, Ana García</h1>
+            <h1 style={{ color: 'white', fontSize: '24px', fontWeight: '800' }}>Hola, {user?.name ?? 'Miembro'}</h1>
             <span style={{ backgroundColor: `${PURPLE}20`, color: PURPLE, fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '999px', border: `1px solid ${PURPLE}30` }}>
               Miembro
             </span>

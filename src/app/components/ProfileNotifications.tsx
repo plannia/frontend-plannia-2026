@@ -1,4 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { getMemberProfileByUserId, updateMemberProfile } from '../services/memberProfileService';
+import { getNotifications, getNotificationsByUser, NotificationResource } from '../services/notificationService';
+import { getUserById } from '../services/userService';
 import { notifications, userProfile as initialProfile } from './mockData';
 
 const ACCENT = '#5B8DEF';
@@ -88,7 +92,7 @@ function EmptyState({ message }: { message: string }) {
 function EditProfileModal({ profile, onClose, onSave }: {
   profile: typeof initialProfile;
   onClose: () => void;
-  onSave: (p: { abilities: string[]; interests: string[]; maxHours: number }) => void;
+  onSave: (p: { abilities: string[]; interests: string[]; maxHours: number }) => Promise<void>;
 }) {
   const [abilities, setAbilities] = useState<string[]>([...profile.abilities]);
   const [interests, setInterests] = useState<string[]>([...profile.interests]);
@@ -105,10 +109,15 @@ function EditProfileModal({ profile, onClose, onSave }: {
     onClose();
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!hasChanges) return;
     setLoading(true);
-    setTimeout(() => { onSave({ abilities, interests, maxHours }); setLoading(false); onClose(); }, 900);
+    try {
+      await onSave({ abilities, interests, maxHours });
+      onClose();
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -225,15 +234,102 @@ function NotifIcon({ read }: { read: boolean }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ProfileNotifications({ initialTab = 'profile' }: Props) {
+  const { user } = useAuth();
   const [profile, setProfile] = useState(initialProfile);
   const [showEdit, setShowEdit] = useState(false);
   const [notifList, setNotifList] = useState(notifications);
   const [notifSearch, setNotifSearch] = useState('');
+  const [loadingNotifs, setLoadingNotifs] = useState(initialTab === 'notifications');
+  const [notifError, setNotifError] = useState<string | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(initialTab === 'profile');
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  const splitTags = (value?: string) => (value ?? '').split(',').map(tag => tag.trim()).filter(Boolean);
+  const joinTags = (value: string[]) => value.map(tag => tag.trim()).filter(Boolean).join(', ');
+  const getInitials = (name: string) => name.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) || 'US';
+
+  useEffect(() => {
+    if (initialTab !== 'profile' || !user) return;
+    const loadProfile = async () => {
+      try {
+        setLoadingProfile(true);
+        setProfileError(null);
+        const [userData, memberProfileData] = await Promise.all([
+          getUserById(user.id),
+          getMemberProfileByUserId(user.id).catch(() => null),
+        ]);
+        setProfile({
+          name: userData.name,
+          email: userData.email,
+          position: userData.position,
+          role: userData.role === 'LEADER' ? 'Lider' : 'Miembro',
+          initials: getInitials(userData.name),
+          maxHours: memberProfileData?.maxHours ?? initialProfile.maxHours,
+          activeHours: memberProfileData?.activeHours ?? 0,
+          abilities: splitTags(memberProfileData?.abilities),
+          interests: splitTags(memberProfileData?.interests),
+          taskStatusCounts: userData.taskStatusCounts ?? { toDoCount: 0, inProgressCount: 0, doneCount: 0 },
+        });
+      } catch (err) {
+        setProfileError(err instanceof Error ? err.message : 'Error al cargar perfil');
+      } finally {
+        setLoadingProfile(false);
+      }
+    };
+    loadProfile();
+  }, [initialTab, user]);
+
+  useEffect(() => {
+    if (initialTab !== 'notifications') return;
+    const loadNotifications = async () => {
+      try {
+        setLoadingNotifs(true);
+        setNotifError(null);
+        const data: NotificationResource[] = user?.role === 'LEADER'
+          ? await getNotifications()
+          : await getNotificationsByUser(user!.id);
+        setNotifList(data.map((notification, index) => ({
+          id: notification.id,
+          type: notification.channel?.toLowerCase() || 'notification',
+          icon: '🔔',
+          title: notification.channel || 'Notificación',
+          message: notification.message,
+          time: index === 0 ? 'Reciente' : '',
+          read: false,
+        })));
+      } catch (err) {
+        setNotifError(err instanceof Error ? err.message : 'Error al cargar notificaciones');
+      } finally {
+        setLoadingNotifs(false);
+      }
+    };
+    if (user) loadNotifications();
+  }, [initialTab, user]);
 
   const unread = notifList.filter(n => !n.read).length;
   const markAllRead = () => setNotifList(prev => prev.map(n => ({ ...n, read: true })));
   const markRead = (id: number) => setNotifList(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  const handleSave = (data: { abilities: string[]; interests: string[]; maxHours: number }) => setProfile(p => ({ ...p, ...data }));
+  const handleSave = async (data: { abilities: string[]; interests: string[]; maxHours: number }) => {
+    if (!user) return;
+    try {
+      setProfileError(null);
+      const updated = await updateMemberProfile(user.id, {
+        maxHours: data.maxHours,
+        abilities: joinTags(data.abilities),
+        interests: joinTags(data.interests),
+      });
+      setProfile(p => ({
+        ...p,
+        maxHours: updated.maxHours,
+        activeHours: updated.activeHours,
+        abilities: splitTags(updated.abilities),
+        interests: splitTags(updated.interests),
+      }));
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : 'Error al guardar perfil');
+      throw err;
+    }
+  };
 
   const saturation = profile.activeHours / profile.maxHours;
   const isOverload = saturation > 0.8;
@@ -272,7 +368,15 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
         </div>
 
         <div className="space-y-2">
-          {filteredNotifs.map(notif => (
+          {loadingNotifs && (
+            <p style={{ color: '#6B7280', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '32px 0' }}>Cargando notificaciones...</p>
+          )}
+          {notifError && (
+            <div style={{ padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#FCA5A5', fontSize: '13px' }}>
+              {notifError}
+            </div>
+          )}
+          {!loadingNotifs && !notifError && filteredNotifs.map(notif => (
             <div key={notif.id} onClick={() => markRead(notif.id)}
               style={{
                 backgroundColor: notif.read ? CARD_BG : 'rgba(91,141,239,0.05)',
@@ -295,7 +399,7 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
               <span style={{ color: '#374151', fontSize: '11px', flexShrink: 0, marginTop: '1px' }}>{notif.time}</span>
             </div>
           ))}
-          {filteredNotifs.length === 0 && (
+          {!loadingNotifs && !notifError && filteredNotifs.length === 0 && (
             <p style={{ color: '#374151', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '32px 0' }}>No se encontraron notificaciones.</p>
           )}
         </div>
@@ -304,8 +408,17 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
   }
 
   // Profile view (no tabs)
+  if (loadingProfile) {
+    return <div className="p-6" style={{ color: '#6B7280' }}>Cargando perfil...</div>;
+  }
+
   return (
     <div className="p-6">
+      {profileError && (
+        <div style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#FCA5A5', fontSize: '13px' }}>
+          {profileError}
+        </div>
+      )}
       <div className="flex items-start justify-between mb-5">
         <h1 style={{ color: 'white', fontSize: '22px', fontWeight: '700' }}>Mi Perfil</h1>
       </div>
