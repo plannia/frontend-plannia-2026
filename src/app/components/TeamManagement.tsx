@@ -1,12 +1,81 @@
-import { useState } from 'react';
-import { teamMembers } from './mockData';
+import { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import BASE_URL, { getHeaders } from '../services/api';
+import { getTeamProfiles } from '../services/profileService';
 
 const ACCENT = '#5B8DEF';
 const CARD_BG = '#141C2B';
 
+const COLORS = ['#5B8DEF', '#7C6FE8', '#10B981', '#F59E0B', '#EC4899', '#06B6D4', '#F97316', '#8B5CF6'];
+
+const getInitials = (name: string) =>
+  name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+
+interface DisplayMember {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  initials: string;
+  color: string;
+  hoursUsed: number;
+  hoursMax: number;
+  skills: string[];
+}
+
+interface TeamBasic {
+  id: number;
+  name: string;
+  code: string;
+  members: { id: number; name: string; email: string; role: string; position: string }[];
+}
+
+async function getTeam(teamId: number): Promise<TeamBasic> {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('No se pudo obtener el equipo');
+  return res.json();
+}
+
 export function TeamManagement() {
+  const { user } = useAuth();
   const [copied, setCopied] = useState(false);
-  const teamCode = 'PL-2026';
+  const [teamCode, setTeamCode] = useState('');
+  const [members, setMembers] = useState<DisplayMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user?.teamId) return;
+    setLoading(true);
+
+    Promise.all([getTeam(user.teamId), getTeamProfiles(user.teamId)])
+      .then(([team, profiles]) => {
+        setTeamCode(team.code);
+
+        const merged: DisplayMember[] = team.members.map((m, idx) => {
+          const profile = profiles.find(p => p.userId === m.id);
+          return {
+            id: m.id,
+            name: m.name,
+            email: m.email,
+            role: m.role === 'LEADER' ? 'Team Leader' : (m.position || 'Miembro'),
+            initials: getInitials(m.name),
+            color: COLORS[idx % COLORS.length],
+            hoursUsed: profile?.activeHours ?? 0,
+            hoursMax: profile?.maxHours ?? 0,
+            skills: profile?.abilities ?? [],
+          };
+        });
+
+        setMembers(merged);
+        setError(null);
+      })
+      .catch(() => setError('No se pudo cargar el equipo.'))
+      .finally(() => setLoading(false));
+  }, [user]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(teamCode).catch(() => {});
@@ -14,9 +83,11 @@ export function TeamManagement() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  if (loading) return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando equipo...</div>;
+  if (error) return <div className="p-6" style={{ color: '#F59E0B', fontSize: '13px' }}>{error}</div>;
+
   return (
     <div className="p-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <h1 style={{ color: 'white', fontSize: '22px', fontWeight: '700' }}>Equipo</h1>
@@ -39,14 +110,13 @@ export function TeamManagement() {
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: '#6B7280', fontSize: '13px' }}>{teamMembers.length} miembros activos</span>
+          <span style={{ color: '#6B7280', fontSize: '13px' }}>{members.length} miembros activos</span>
         </div>
       </div>
 
-      {/* Member Grid */}
       <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-        {teamMembers.map(member => {
-          const saturation = member.hoursUsed / member.hoursMax;
+        {members.map(member => {
+          const saturation = member.hoursMax > 0 ? member.hoursUsed / member.hoursMax : 0;
           return (
             <div
               key={member.id}
@@ -55,7 +125,6 @@ export function TeamManagement() {
               onMouseEnter={e => (e.currentTarget.style.borderColor = `${member.color}40`)}
               onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)')}
             >
-              {/* Avatar + Info */}
               <div className="flex items-start gap-4 mb-4">
                 <div className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${member.color}20`, border: `2px solid ${member.color}40` }}>
                   <span style={{ color: member.color, fontSize: '18px', fontWeight: '800' }}>{member.initials}</span>
@@ -67,7 +136,6 @@ export function TeamManagement() {
                 </div>
               </div>
 
-              {/* Hours Usage */}
               <div style={{ marginBottom: '14px' }}>
                 <div className="flex justify-between mb-1.5">
                   <span style={{ color: '#6B7280', fontSize: '12px' }}>Horas de trabajo utilizadas</span>
@@ -88,23 +156,26 @@ export function TeamManagement() {
                 )}
               </div>
 
-              {/* Skills */}
               <div>
                 <p style={{ color: '#4B5563', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Habilidades</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {member.skills.map(skill => (
-                    <span
-                      key={skill}
-                      style={{
-                        backgroundColor: `${member.color}12`,
-                        border: `1px solid ${member.color}30`,
-                        color: member.color, fontSize: '11px', fontWeight: '500',
-                        padding: '3px 9px', borderRadius: '999px'
-                      }}
-                    >
-                      {skill}
-                    </span>
-                  ))}
+                  {member.skills.length === 0 ? (
+                    <span style={{ color: '#374151', fontSize: '11px', fontStyle: 'italic' }}>Sin registrar</span>
+                  ) : (
+                    member.skills.map(skill => (
+                      <span
+                        key={skill}
+                        style={{
+                          backgroundColor: `${member.color}12`,
+                          border: `1px solid ${member.color}30`,
+                          color: member.color, fontSize: '11px', fontWeight: '500',
+                          padding: '3px 9px', borderRadius: '999px'
+                        }}
+                      >
+                        {skill}
+                      </span>
+                    ))
+                  )}
                 </div>
               </div>
             </div>

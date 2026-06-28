@@ -6,6 +6,7 @@ import { TeamPlanner } from './TeamPlanner';
 import { TeamManagement } from './TeamManagement';
 import { ProfileNotifications } from './ProfileNotifications';
 import { MemberProfilePage } from './MemberProfilePage';
+import { useAuth } from '../context/AuthContext';
 import { notifications as initialNotifs } from './mockData';
 
 const BG = '#0F1419';
@@ -63,6 +64,16 @@ function useClickOutside(ref: React.RefObject<HTMLElement | null>, handler: () =
 
 export function AppLayout({ onLogout }: Props) {
   const [page, setPage] = useState<Page>('dashboard');
+  const { user } = useAuth();
+  const userName = user?.name ?? '';
+  const userInitials = userName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(w => w[0])
+    .join('')
+    .toUpperCase();
+const userRoleLabel = user?.role === 'LEADER' ? 'Líder' : 'Miembro';
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -287,11 +298,11 @@ export function AppLayout({ onLogout }: Props) {
                 onMouseLeave={e => { if (!profileOpen) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
               >
                 <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: `linear-gradient(135deg, ${ACCENT}, #7C6FE8)` }}>
-                  <span style={{ color: 'white', fontSize: '10px', fontWeight: '800' }}>JL</span>
+                  <span style={{ color: 'white', fontSize: '10px', fontWeight: '800' }}>{userInitials}</span>
                 </div>
                 <div style={{ textAlign: 'left' }}>
-                  <p style={{ color: 'white', fontSize: '12px', fontWeight: '600', lineHeight: '1.2' }}>Juan López</p>
-                  <p style={{ color: ACCENT, fontSize: '10px', lineHeight: '1.2' }}>Líder</p>
+                  <p style={{ color: 'white', fontSize: '12px', fontWeight: '600', lineHeight: '1.2' }}>{userName}</p>
+                  <p style={{ color: ACCENT, fontSize: '10px', lineHeight: '1.2' }}>{userRoleLabel}</p>
                 </div>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                   style={{ transform: profileOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', marginLeft: '2px' }}>
@@ -312,11 +323,11 @@ export function AppLayout({ onLogout }: Props) {
                   <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${ACCENT}, #7C6FE8)` }}>
-                        <span style={{ color: 'white', fontSize: '11px', fontWeight: '800' }}>JL</span>
+                        <span style={{ color: 'white', fontSize: '11px', fontWeight: '800' }}>{userInitials}</span>
                       </div>
                       <div>
-                        <p style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>Juan López</p>
-                        <p style={{ color: '#6B7280', fontSize: '11px' }}>Líder · Plannia</p>
+                        <p style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{userName}</p>
+                        <p style={{ color: '#6B7280', fontSize: '11px' }}>{userRoleLabel} · Plannia</p>
                       </div>
                     </div>
                   </div>

@@ -3,6 +3,7 @@ import { MemberDashboard } from './MemberDashboard';
 import { MisTareas } from './MisTareas';
 import { TeamPlanner } from './TeamPlanner';
 import { MemberProfilePage } from './MemberProfilePage';
+import { useAuth } from '../context/AuthContext';
 import { notifications as initialNotifs, categories } from './mockData';
 
 const BG = '#0F1419';
@@ -16,11 +17,6 @@ type MemberPage = 'dashboard' | 'mis-tareas' | 'planner' | 'notifications' | 'pr
 interface Props {
   onLogout: () => void;
 }
-
-const MEMBER_ID = 1; // Ana García
-const MEMBER_NAME = 'Ana García';
-const MEMBER_INITIALS = 'AG';
-const memberCategoryNames = categories.filter(c => c.memberIds.includes(MEMBER_ID)).map(c => c.name);
 
 const navItems: { page: MemberPage; label: string; icon: React.ReactNode }[] = [
   {
@@ -82,7 +78,6 @@ function NotificationsPage({ notifs, onMarkRead }: { notifs: typeof initialNotif
           <h1 style={{ color: 'white', fontSize: '22px', fontWeight: '700', marginBottom: '3px' }}>Notificaciones</h1>
           <p style={{ color: '#4B5563', fontSize: '13px' }}>Actualizaciones del equipo y actividad reciente.</p>
         </div>
-        {/* Search bar */}
         <div style={{ position: 'relative' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
             style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
@@ -138,6 +133,19 @@ function NotificationsPage({ notifs, onMarkRead }: { notifs: typeof initialNotif
 }
 
 export function MemberAppLayout({ onLogout }: Props) {
+  const { user } = useAuth();
+  const memberName = user?.name ?? '';
+  const memberInitials = memberName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(w => w[0])
+    .join('')
+    .toUpperCase();
+  const memberCategoryNames = categories
+    .filter(c => user && c.memberIds.includes(user.id))
+    .map(c => c.name);
+
   const [page, setPage] = useState<MemberPage>('dashboard');
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -168,12 +176,10 @@ export function MemberAppLayout({ onLogout }: Props) {
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: BG }}>
       {/* Sidebar */}
       <aside className="flex flex-col" style={{ width: '240px', minWidth: '240px', backgroundColor: SIDEBAR_BG, borderRight: '1px solid rgba(255,255,255,0.05)' }}>
-        {/* Logo — typographic wordmark */}
         <div className="flex items-center px-5 py-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
           <span style={{ color: 'white', fontSize: '19px', fontWeight: '800', letterSpacing: '-0.5px' }}>Plannia</span>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           {navItems.map(({ page: p, label, icon }) => {
             const active = page === p;
@@ -206,7 +212,6 @@ export function MemberAppLayout({ onLogout }: Props) {
           })}
         </nav>
 
-        {/* Logout */}
         <div className="px-3 pb-4" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '10px' }}>
           <button
             onClick={onLogout}
@@ -226,9 +231,7 @@ export function MemberAppLayout({ onLogout }: Props) {
         </div>
       </aside>
 
-      {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Navbar */}
         <header style={{
           backgroundColor: NAVBAR_BG, borderBottom: '1px solid rgba(255,255,255,0.05)',
           padding: '0 20px', height: '58px', display: 'flex', alignItems: 'center',
@@ -237,7 +240,6 @@ export function MemberAppLayout({ onLogout }: Props) {
           <div style={{ flex: 1 }} />
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {/* Notifications bell */}
             <div style={{ position: 'relative' }} ref={notifRef}>
               <button
                 onClick={() => { setNotifOpen(o => !o); setProfileOpen(false); }}
@@ -259,7 +261,6 @@ export function MemberAppLayout({ onLogout }: Props) {
                 )}
               </button>
 
-              {/* Notifications dropdown */}
               {notifOpen && (
                 <div style={{
                   position: 'absolute', top: 'calc(100% + 8px)', right: 0,
@@ -315,7 +316,6 @@ export function MemberAppLayout({ onLogout }: Props) {
               )}
             </div>
 
-            {/* Profile */}
             <div style={{ position: 'relative' }} ref={profileRef}>
               <button
                 onClick={() => { setProfileOpen(o => !o); setNotifOpen(false); }}
@@ -331,10 +331,10 @@ export function MemberAppLayout({ onLogout }: Props) {
                 onMouseLeave={e => { if (!profileOpen) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
               >
                 <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` }}>
-                  <span style={{ color: 'white', fontSize: '10px', fontWeight: '800' }}>{MEMBER_INITIALS}</span>
+                  <span style={{ color: 'white', fontSize: '10px', fontWeight: '800' }}>{memberInitials}</span>
                 </div>
                 <div style={{ textAlign: 'left' }}>
-                  <p style={{ color: 'white', fontSize: '12px', fontWeight: '600', lineHeight: '1.2' }}>{MEMBER_NAME}</p>
+                  <p style={{ color: 'white', fontSize: '12px', fontWeight: '600', lineHeight: '1.2' }}>{memberName}</p>
                   <p style={{ color: PURPLE, fontSize: '10px', lineHeight: '1.2' }}>Miembro</p>
                 </div>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -343,7 +343,6 @@ export function MemberAppLayout({ onLogout }: Props) {
                 </svg>
               </button>
 
-              {/* Profile dropdown */}
               {profileOpen && (
                 <div style={{
                   position: 'absolute', top: 'calc(100% + 8px)', right: 0,
@@ -355,10 +354,10 @@ export function MemberAppLayout({ onLogout }: Props) {
                   <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` }}>
-                        <span style={{ color: 'white', fontSize: '11px', fontWeight: '800' }}>{MEMBER_INITIALS}</span>
+                        <span style={{ color: 'white', fontSize: '11px', fontWeight: '800' }}>{memberInitials}</span>
                       </div>
                       <div>
-                        <p style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{MEMBER_NAME}</p>
+                        <p style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{memberName}</p>
                         <p style={{ color: '#6B7280', fontSize: '11px' }}>Miembro · Plannia</p>
                       </div>
                     </div>
@@ -390,7 +389,6 @@ export function MemberAppLayout({ onLogout }: Props) {
           </div>
         </header>
 
-        {/* Page content */}
         <main className="flex-1 overflow-auto" style={{ backgroundColor: BG }}>
           {renderPage()}
         </main>
