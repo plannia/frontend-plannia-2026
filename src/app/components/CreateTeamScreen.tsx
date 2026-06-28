@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { createTeam, signIn } from '../services/authService';
+import { createMemberProfile } from '../services/profileService';
 
 const BG = '#0F1419';
 const ACCENT = '#5B8DEF';
@@ -37,6 +38,9 @@ function InputField({ label, type = 'text', placeholder, value, onChange }: {
 export function CreateTeamScreen({ onSuccess, onBack }: Props) {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ team: '', name: '', email: '', password: '' });
+  const [maxHours, setMaxHours] = useState('40');
+  const [abilities, setAbilities] = useState('');
+  const [interests, setInterests] = useState('');
   const [teamCode, setTeamCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -46,22 +50,38 @@ export function CreateTeamScreen({ onSuccess, onBack }: Props) {
     if (!form.team || !form.name || !form.email || !form.password) {
       setError('Por favor completa todos los campos');
       return;
-    } 
+    }
     try {
       setLoading(true);
       setError('');
+
       // 1. Crear el equipo
       const teamData = await createTeam(form.team, form.email, form.name, form.password);
       setTeamCode(teamData.code);
 
-      // 2. Hacer sign-in para obtener el token
+      // 2. Hacer sign-in para obtener el token y el usuario (leader) recién creado
       const authData = await signIn(form.email, form.password);
       login(authData.user, authData.token);
 
+      // 3. Crear el member-profile del leader con sus horas/habilidades/intereses
+      try {
+        await createMemberProfile({
+          userId: authData.user.id,
+          teamId: teamData.id,
+          maxHours: Number(maxHours) || 0,
+          abilities: abilities.split(',').map(s => s.trim()).filter(Boolean),
+          interests: interests.split(',').map(s => s.trim()).filter(Boolean),
+        });
+      } catch {
+        // Si falla la creación del perfil, no bloqueamos el flujo de creación de equipo,
+        // pero lo dejamos registrado en consola para depurar.
+        console.error('No se pudo crear el member-profile del leader');
+      }
+
       setShowModal(true);
-  }   catch (err: any) {
+    } catch (err: any) {
       setError(err.message || 'Error al crear el equipo');
-  }   finally {
+    } finally {
       setLoading(false);
     }
   };
@@ -97,6 +117,10 @@ export function CreateTeamScreen({ onSuccess, onBack }: Props) {
             <InputField label="Tu nombre completo" placeholder="Ej: María González" value={form.name} onChange={v => setForm(f => ({ ...f, name: v }))} />
             <InputField label="Correo electrónico" type="email" placeholder="tu@empresa.com" value={form.email} onChange={v => setForm(f => ({ ...f, email: v }))} />
             <InputField label="Contraseña" type="password" placeholder="••••••••" value={form.password} onChange={v => setForm(f => ({ ...f, password: v }))} />
+
+            <InputField label="Horas máximas semanales" type="number" placeholder="40" value={maxHours} onChange={setMaxHours} />
+            <InputField label="Habilidades (separadas por coma)" placeholder="Ej: React, Liderazgo, Scrum" value={abilities} onChange={setAbilities} />
+            <InputField label="Intereses (separados por coma)" placeholder="Ej: UX, IA, Gestión de equipos" value={interests} onChange={setInterests} />
 
             {error && (
               <p style={{ color: '#F87171', fontSize: '13px', textAlign: 'center' }}>{error}</p>

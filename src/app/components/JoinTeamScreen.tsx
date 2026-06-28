@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { signUp } from '../services/authService';
+import { signUp, signIn } from '../services/authService';
 import { useAuth } from '../context/AuthContext';
+import { createMemberProfile } from '../services/profileService';
 
 const BG = '#0F1419';
 const ACCENT = '#5B8DEF';
@@ -50,8 +51,32 @@ export function JoinTeamScreen({ onSuccess, onBack }: Props) {
     try {
       setLoading(true);
       setError('');
-      const data = await signUp(form.name, form.email, form.password, form.role, form.code);
-      login(data, '');
+
+      // 1. Registrar al member (esto NO devuelve token, solo el usuario)
+      await signUp(form.name, form.email, form.password, form.role, form.code);
+
+      // 2. Hacer sign-in real para obtener el token y los datos completos
+      const authData = await signIn(form.email, form.password);
+      await login(authData.user, authData.token);
+
+      // 3. Leer el usuario completo (con teamId) que login() ya guardó en localStorage
+      const savedUser = JSON.parse(localStorage.getItem('user') || '{}');
+
+      // 4. Crear su member-profile vacío para que después pueda editar sin error
+      if (savedUser?.id && savedUser?.teamId) {
+        try {
+          await createMemberProfile({
+            userId: savedUser.id,
+            teamId: savedUser.teamId,
+            maxHours: 0,
+            abilities: [],
+            interests: [],
+          });
+        } catch {
+          console.error('No se pudo crear el member-profile del nuevo miembro');
+        }
+      }
+
       onSuccess();
     } catch (err: any) {
       setError(err.message || 'Error al unirse al equipo');

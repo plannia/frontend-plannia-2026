@@ -35,6 +35,8 @@ export interface MemberProfileResult {
   activeHours: number;
 }
 
+
+
 // ============================================================
 // HELPERS internos de conversión (string csv <-> array)
 // ============================================================
@@ -161,4 +163,27 @@ export async function reduceActiveHours(userId: number, hours: number) {
   });
   if (!res.ok) throw new Error('No se pudo reducir las horas activas');
   return res.json();
+}
+
+export async function createMemberProfile(data: {
+  userId: number;
+  teamId: number;
+  maxHours: number;
+  abilities: string[];
+  interests: string[];
+}) {
+  const res = await fetch(`${BASE_URL}/member-profiles`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      userId: data.userId,
+      teamId: data.teamId,
+      maxHours: data.maxHours,
+      abilities: data.abilities.join(', '),
+      interests: data.interests.join(', '),
+    }),
+  });
+  if (!res.ok) throw new Error('No se pudo crear el perfil del miembro');
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
