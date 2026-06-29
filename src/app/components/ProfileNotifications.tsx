@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { notifications } from './mockData';
 import { useAuth } from '../context/AuthContext';
 import { getUserDetail, updateMemberProfile } from '../services/profileService';
+import { getUiNotificationsByUser, UiNotification } from '../services/notificationService';
 
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
@@ -254,8 +254,14 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
-  const [notifList, setNotifList] = useState(notifications);
+  const [notifList, setNotifList] = useState<UiNotification[]>([]);
   const [notifSearch, setNotifSearch] = useState('');
+
+  // Notificaciones REALES del backend (antes usaba el mock 'notifications').
+  useEffect(() => {
+    if (!user) return;
+    getUiNotificationsByUser(user.id).then(setNotifList).catch(() => setNotifList([]));
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
