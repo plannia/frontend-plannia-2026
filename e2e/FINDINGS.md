@@ -10,6 +10,10 @@ Fecha: 2026-06-29
 
 **Detectado por:** spec E2E 14 (quitar miembro de categoría). El backend está bien (el status lo maneja el sync de tareas); era el front el que reenviaba un status no permitido.
 
+## ℹ️ NOTA — El "Planificador" es solo lectura; su drag-and-drop está deshabilitado
+
+`TeamPlanner.tsx` tiene `const canEditSchedule = false;` → las tareas no son `draggable`, los drop-zones no hacen nada y `handleDrop` corta al toque. Además `handleDrop` solo mueve la tarea en estado LOCAL (no hay llamada al backend). El propio footer lo aclara: *"La edición de horarios estará disponible cuando exista un endpoint para guardar startTime/endTime."* Falta un endpoint para persistir `startTime/endTime` por tarea. Hoy el Planner es una **visualización read-only** de la carga asignada (start fijo en 9:00, fecha por `limitDate`). Cubierto por el spec E2E `16-planner-readonly` (render + navegación de fecha). No es bug; es feature incompleta.
+
 ## 🟡 ABIERTO — `GET /recommend` devuelve 404 cuando no hay candidatos (debería ser 200 + lista vacía)
 
 **Dónde:** `assignment` BC — `AssignmentController.getTopCandidates` retorna `ResponseEntity.notFound()` (404) cuando la lista de candidatos viene vacía.
