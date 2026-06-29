@@ -68,12 +68,20 @@ export const createCategoryGantt = async (categoryId: number): Promise<CategoryR
     headers: getHeaders(),
   });
   const data = await response.json();
+  const formatGanttError = (message: string) => {
+    if (/storageQuotaExceeded|storage quota has been exceeded/i.test(message)) {
+      return 'La cuenta de servicio de Google no tiene espacio en Drive. Crea una Unidad compartida (Shared Drive), añade la service account como colaboradora, configura GANTT_OUTPUT_FOLDER_ID en Azure con el ID de una carpeta dentro de esa unidad y reinicia el backend.';
+    }
+    return message;
+  };
   if (response.status === 502) {
     throw new Error(
-      data.message ||
-        'No se pudo conectar con Google Sheets. Verifica la configuración de Gantt en Azure.'
+      formatGanttError(
+        data.message ||
+          'No se pudo conectar con Google Sheets. Verifica la configuración de Gantt en Azure.'
+      )
     );
   }
-  if (!response.ok) throw new Error(data.message || 'Error al generar el Gantt');
+  if (!response.ok) throw new Error(formatGanttError(data.message || 'Error al generar el Gantt'));
   return data;
 };

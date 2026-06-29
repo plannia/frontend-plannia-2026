@@ -110,6 +110,7 @@ export async function getTeamProfiles(teamId: number): Promise<MemberProfileResu
     method: 'GET',
     headers: getHeaders(),
   });
+  if (res.status === 401) throw new Error('SESSION_EXPIRED');
   if (!res.ok) throw new Error('No se pudieron obtener los perfiles del equipo');
   const data = await res.json();
 

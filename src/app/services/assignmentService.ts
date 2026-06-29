@@ -48,7 +48,9 @@ export const getAssignmentsByUser = async (userId: number): Promise<AssignmentRe
   const response = await fetch(`${BASE_URL}/assignments/users/${userId}`, {
     headers: getHeaders(),
   });
-  const data = await response.json();
+  if (response.status === 404) return [];
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : [];
   if (!response.ok) throw new Error(data.message || 'Error al obtener asignaciones');
   return data;
 };

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, type CSSProperties } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { signIn } from '../services/authService';
 import { getTeamById } from '../services/teamService';
 import { getTeamProfiles } from '../services/profileService';
 import { deleteUser, updateUser } from '../services/userService';
@@ -35,10 +36,12 @@ interface DisplayMember {
 
 function EditMemberModal({
   member,
+  isSelf,
   onClose,
   onSave,
 }: {
   member: DisplayMember;
+  isSelf: boolean;
   onClose: () => void;
   onSave: (data: { name: string; email: string; position: string; password: string }) => Promise<void>;
 }) {
@@ -52,6 +55,11 @@ function EditMemberModal({
   const handleSubmit = async () => {
     if (!name.trim() || !email.trim() || !position.trim()) {
       setError('Nombre, correo y cargo son obligatorios.');
+      return;
+    }
+    const emailChanged = email.trim().toLowerCase() !== member.email.toLowerCase();
+    if (isSelf && emailChanged && !password.trim()) {
+      setError('Para cambiar tu correo debes indicar tu contraseña (actual o nueva).');
       return;
     }
     setLoading(true);
@@ -75,7 +83,7 @@ function EditMemberModal({
     <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)' }}>
       <div style={{ backgroundColor: '#0D1520', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', width: '100%', maxWidth: '440px', margin: '16px' }}>
         <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '700' }}>Editar miembro</h3>
+          <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '700' }}>{isSelf ? 'Editar mi perfil' : 'Editar miembro'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280' }}>×</button>
         </div>
         <div style={{ padding: '18px 22px' }} className="space-y-3">
@@ -92,9 +100,22 @@ function EditMemberModal({
             <input value={position} onChange={e => setPosition(e.target.value)} style={FIELD_STYLE} />
           </div>
           <div>
-            <label style={{ color: '#9CA3AF', fontSize: '12px', display: 'block', marginBottom: '5px' }}>Nueva contraseña (opcional)</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Dejar vacío para no cambiar" style={FIELD_STYLE} />
+            <label style={{ color: '#9CA3AF', fontSize: '12px', display: 'block', marginBottom: '5px' }}>
+              {isSelf ? 'Contraseña (obligatoria si cambias el correo)' : 'Nueva contraseña (opcional)'}
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder={isSelf ? 'Actual o nueva contraseña' : 'Dejar vacío para no cambiar'}
+              style={FIELD_STYLE}
+            />
           </div>
+          {isSelf && (
+            <p style={{ color: '#6B7280', fontSize: '11px', margin: 0 }}>
+              Si cambias el correo, se renovará tu sesión automáticamente.
+            </p>
+          )}
           {error && <p style={{ color: '#F87171', fontSize: '12px' }}>{error}</p>}
           <div className="flex gap-3 pt-1">
             <button onClick={onClose} style={{ flex: 1, padding: '10px', backgroundColor: 'rgba(255,255,255,0.05)', color: '#9CA3AF', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '9px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
@@ -115,7 +136,7 @@ function EditMemberModal({
 }
 
 export function TeamManagement() {
-  const { user } = useAuth();
+  const { user, updateSessionUser, login } = useAuth();
   const [copied, setCopied] = useState(false);
   const [teamCode, setTeamCode] = useState('');
   const [members, setMembers] = useState<DisplayMember[]>([]);
@@ -150,7 +171,13 @@ export function TeamManagement() {
         setMembers(merged);
         setError(null);
       })
-      .catch(() => setError('No se pudo cargar el equipo.'))
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.message === 'SESSION_EXPIRED') {
+          setError('Tu sesión quedó desactualizada. Cierra sesión e inicia de nuevo con tu correo actual.');
+        } else {
+          setError('No se pudo cargar el equipo.');
+        }
+      })
       .finally(() => setLoading(false));
   }, [user?.teamId]);
 
@@ -164,11 +191,24 @@ export function TeamManagement() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const canManageMember = (member: DisplayMember) =>
-    member.systemRole === 'MEMBER' && member.id !== user?.id;
+  const isCurrentUser = (member: DisplayMember) => member.id === user?.id;
+
+  const canEditMember = (member: DisplayMember) =>
+    member.systemRole === 'MEMBER' || (isCurrentUser(member) && member.systemRole === 'LEADER');
+
+  const canDeleteMember = (member: DisplayMember) =>
+    member.systemRole === 'MEMBER' && !isCurrentUser(member);
 
   const handleSaveMember = async (memberId: number, data: { name: string; email: string; position: string; password: string }) => {
     setActionError(null);
+    const emailChanged =
+      memberId === user?.id &&
+      data.email.trim().toLowerCase() !== (user.email ?? '').toLowerCase();
+
+    if (emailChanged && !data.password) {
+      throw new Error('Para cambiar tu correo debes indicar tu contraseña (actual o nueva).');
+    }
+
     const payload: { name: string; email: string; position: string; password?: string } = {
       name: data.name,
       email: data.email,
@@ -176,11 +216,24 @@ export function TeamManagement() {
     };
     if (data.password) payload.password = data.password;
     await updateUser(memberId, payload);
+
+    if (memberId === user?.id) {
+      if (emailChanged) {
+        const authData = await signIn(data.email, data.password);
+        await login(authData.user, authData.token);
+      } else {
+        updateSessionUser({
+          name: data.name,
+          email: data.email,
+          position: data.position,
+        });
+      }
+    }
     loadMembers();
   };
 
   const handleDeleteMember = async (member: DisplayMember) => {
-    if (!canManageMember(member)) return;
+    if (!canDeleteMember(member)) return;
     const confirmed = confirm(
       `¿Eliminar a ${member.name} del equipo?\n\nSe desactivarán sus asignaciones y se eliminará su perfil.`
     );
@@ -231,7 +284,9 @@ export function TeamManagement() {
       <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
         {members.map(member => {
           const saturation = member.hoursMax > 0 ? member.hoursUsed / member.hoursMax : 0;
-          const manageable = canManageMember(member);
+          const editable = canEditMember(member);
+          const deletable = canDeleteMember(member);
+          const showActions = editable || deletable;
           return (
             <div
               key={member.id}
@@ -268,7 +323,7 @@ export function TeamManagement() {
                 </div>
               </div>
 
-              <div style={{ marginBottom: manageable ? '14px' : 0 }}>
+              <div style={{ marginBottom: showActions ? '14px' : 0 }}>
                 <p style={{ color: '#4B5563', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Habilidades</p>
                 <div className="flex flex-wrap gap-1.5">
                   {member.skills.length === 0 ? (
@@ -291,31 +346,35 @@ export function TeamManagement() {
                 </div>
               </div>
 
-              {manageable && (
+              {showActions && (
                 <div className="flex gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <button
-                    onClick={() => setEditingMember(member)}
-                    style={{
-                      flex: 1, padding: '8px', backgroundColor: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px',
-                      color: '#D1D5DB', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
-                    }}
-                  >
-                    Editar
-                  </button>
-                  <button
-                    onClick={() => handleDeleteMember(member)}
-                    disabled={deletingId === member.id}
-                    style={{
-                      flex: 1, padding: '8px', backgroundColor: 'rgba(239,68,68,0.1)',
-                      border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px',
-                      color: '#F87171', fontSize: '12px', fontWeight: '600',
-                      cursor: deletingId === member.id ? 'not-allowed' : 'pointer',
-                      opacity: deletingId === member.id ? 0.6 : 1,
-                    }}
-                  >
-                    {deletingId === member.id ? 'Eliminando...' : 'Eliminar'}
-                  </button>
+                  {editable && (
+                    <button
+                      onClick={() => setEditingMember(member)}
+                      style={{
+                        flex: 1, padding: '8px', backgroundColor: 'rgba(255,255,255,0.05)',
+                        border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px',
+                        color: '#D1D5DB', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                      }}
+                    >
+                      Editar
+                    </button>
+                  )}
+                  {deletable && (
+                    <button
+                      onClick={() => handleDeleteMember(member)}
+                      disabled={deletingId === member.id}
+                      style={{
+                        flex: 1, padding: '8px', backgroundColor: 'rgba(239,68,68,0.1)',
+                        border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px',
+                        color: '#F87171', fontSize: '12px', fontWeight: '600',
+                        cursor: deletingId === member.id ? 'not-allowed' : 'pointer',
+                        opacity: deletingId === member.id ? 0.6 : 1,
+                      }}
+                    >
+                      {deletingId === member.id ? 'Eliminando...' : 'Eliminar'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -326,6 +385,7 @@ export function TeamManagement() {
       {editingMember && (
         <EditMemberModal
           member={editingMember}
+          isSelf={isCurrentUser(editingMember)}
           onClose={() => setEditingMember(null)}
           onSave={data => handleSaveMember(editingMember.id, data)}
         />
