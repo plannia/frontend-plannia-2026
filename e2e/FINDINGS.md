@@ -2,6 +2,14 @@
 
 Fecha: 2026-06-29
 
+## ✅ ARREGLADO (frontend) — Editar categoría estaba ROTO (400 por el status)
+
+**Síntoma:** editar una categoría (nombre, fecha o miembros) desde la UI fallaba en silencio: el modal quedaba abierto y nada se guardaba. Causa: `Categories.handleEdit` llamaba a `updateCategory(id, name, currentSelected.status, dueDate)` reenviando el status actual (`TO_DO`/`IN_PROGRESS`), pero el backend **solo permite setear `CANCELLED` manualmente** → `400 "Only CANCELLED status can be set manually"`, lo que abortaba TODO el edit (incluida la baja/alta de miembros) antes de tocarlos.
+
+**Fix (frontend):** `handleEdit` ahora envía `status: null` (no reenvía el status actual); `categoryService.updateCategory` acepta `string | null`. Verificado con el E2E `14-remove-member-from-category`.
+
+**Detectado por:** spec E2E 14 (quitar miembro de categoría). El backend está bien (el status lo maneja el sync de tareas); era el front el que reenviaba un status no permitido.
+
 ## 🟡 ABIERTO — `GET /recommend` devuelve 404 cuando no hay candidatos (debería ser 200 + lista vacía)
 
 **Dónde:** `assignment` BC — `AssignmentController.getTopCandidates` retorna `ResponseEntity.notFound()` (404) cuando la lista de candidatos viene vacía.
