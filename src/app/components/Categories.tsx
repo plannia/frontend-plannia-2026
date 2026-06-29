@@ -1,6 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getCategoriesByTeam, createCategory, updateCategory, addMemberToCategory, removeMemberFromCategory } from '../services/categoryService';
+import {
+  getCategoriesByTeam,
+  createCategory,
+  updateCategory,
+  addMemberToCategory,
+  removeMemberFromCategory,
+  createCategoryGantt,
+} from '../services/categoryService';
 import { getTeamById } from '../services/teamService';
 import { getTasksByTeam, TaskResource } from '../services/taskService';
 
@@ -20,6 +27,7 @@ interface UICategory {
   status: CategoryStatus;
   dueDate: string; // ISO completo del backend
   memberIds: number[];
+  ganttSpreadsheetUrl?: string | null;
 }
 
 interface UIMember {
@@ -63,7 +71,7 @@ const formatDate = (iso: string) => new Date(iso).toLocaleDateString('es-ES', { 
 const toDateInputValue = (iso: string) => iso ? iso.slice(0, 10) : '';
 const toLimitDateISO = (dateInput: string) => `${dateInput}T23:59:59`;
 
-const FIELD_STYLE: React.CSSProperties = {
+const FIELD_STYLE: CSSProperties = {
   width: '100%', backgroundColor: '#0D1520', border: '1px solid rgba(255,255,255,0.08)',
   borderRadius: '8px', padding: '9px 12px', color: 'white', outline: 'none',
   fontSize: '13px', boxSizing: 'border-box'
@@ -231,6 +239,8 @@ export function Categories() {
   const [showEdit, setShowEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ganttLoading, setGanttLoading] = useState(false);
+  const [ganttError, setGanttError] = useState<string | null>(null);
 
   const loadAll = () => {
     if (!user?.teamId) return;
@@ -255,12 +265,14 @@ export function Categories() {
             taskCount: catTasks.length,
             progress: catTasks.length > 0 ? Math.round((done / catTasks.length) * 100) : 0,
             status: c.status, dueDate: c.limitDate, memberIds: c.memberIds ?? [],
+            ganttSpreadsheetUrl: c.ganttSpreadsheetUrl ?? null,
           };
         });
         setCats(uiCats);
         setAllTasks(tasksData);
         setSelectedId(prev => prev ?? (uiCats[0]?.id ?? null));
         setError(null);
+        setGanttError(null);
       })
       .catch(() => setError('No se pudieron cargar las categorías.'))
       .finally(() => setLoading(false));
@@ -291,6 +303,33 @@ export function Categories() {
     for (const id of toRemove) await removeMemberFromCategory(currentSelected.id, id);
 
     loadAll();
+  };
+
+  const handleGantt = async () => {
+    if (!currentSelected) return;
+    if (currentSelected.memberIds.length === 0) {
+      setGanttError('Asigna al menos un miembro a la categoría antes de generar el Gantt.');
+      return;
+    }
+    setGanttLoading(true);
+    setGanttError(null);
+    try {
+      const updated = await createCategoryGantt(currentSelected.id);
+      setCats(prev =>
+        prev.map(cat =>
+          cat.id === updated.id
+            ? { ...cat, ganttSpreadsheetUrl: updated.ganttSpreadsheetUrl ?? null }
+            : cat
+        )
+      );
+      if (updated.ganttSpreadsheetUrl) {
+        window.open(updated.ganttSpreadsheetUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err) {
+      setGanttError(err instanceof Error ? err.message : 'No se pudo generar el Gantt.');
+    } finally {
+      setGanttLoading(false);
+    }
   };
 
   if (loading) return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando categorías...</div>;
@@ -373,6 +412,62 @@ export function Categories() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
             Editar
           </button>
+        </div>
+
+        <div className="rounded-xl p-4 mb-5" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <p style={{ color: '#6B7280', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                Diagrama Gantt
+              </p>
+              <p style={{ color: '#4B5563', fontSize: '12px' }}>
+                Hoja de Google Sheets sincronizada con las tareas de esta categoría.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {currentSelected.ganttSpreadsheetUrl && (
+                <a
+                  href={currentSelected.ganttSpreadsheetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 13px',
+                    backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)',
+                    borderRadius: '8px', color: '#10B981', fontSize: '12px', fontWeight: '600',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Abrir Gantt
+                </a>
+              )}
+              <button
+                onClick={handleGantt}
+                disabled={ganttLoading}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 13px',
+                  backgroundColor: ganttLoading ? '#1A2235' : ACCENT,
+                  border: 'none', borderRadius: '8px',
+                  color: ganttLoading ? '#4B5563' : 'white',
+                  fontSize: '12px', fontWeight: '600',
+                  cursor: ganttLoading ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {ganttLoading
+                  ? 'Generando...'
+                  : currentSelected.ganttSpreadsheetUrl
+                    ? 'Regenerar Gantt'
+                    : 'Generar Gantt'}
+              </button>
+            </div>
+          </div>
+          {ganttError && (
+            <p style={{ color: '#F59E0B', fontSize: '12px', marginTop: '4px' }}>{ganttError}</p>
+          )}
+          {currentSelected.ganttSpreadsheetUrl && !ganttError && (
+            <p style={{ color: '#6B7280', fontSize: '11px', wordBreak: 'break-all' }}>
+              {currentSelected.ganttSpreadsheetUrl}
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-4 mb-5">

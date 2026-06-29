@@ -1,21 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, type CSSProperties } from 'react';
 import { useAuth } from '../context/AuthContext';
-import BASE_URL, { getHeaders } from '../services/api';
+import { getTeamById } from '../services/teamService';
 import { getTeamProfiles } from '../services/profileService';
+import { deleteUser, updateUser } from '../services/userService';
 
 const ACCENT = '#5B8DEF';
 const CARD_BG = '#141C2B';
+const INPUT_BG = '#1A2235';
 
 const COLORS = ['#5B8DEF', '#7C6FE8', '#10B981', '#F59E0B', '#EC4899', '#06B6D4', '#F97316', '#8B5CF6'];
 
 const getInitials = (name: string) =>
   name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
+const FIELD_STYLE: CSSProperties = {
+  width: '100%', backgroundColor: INPUT_BG, border: '1px solid rgba(255,255,255,0.08)',
+  borderRadius: '8px', padding: '9px 12px', color: 'white', outline: 'none',
+  fontSize: '13px', boxSizing: 'border-box',
+};
+
 interface DisplayMember {
   id: number;
   name: string;
   email: string;
   role: string;
+  systemRole: 'LEADER' | 'MEMBER';
+  position: string;
   initials: string;
   color: string;
   hoursUsed: number;
@@ -23,20 +33,85 @@ interface DisplayMember {
   skills: string[];
 }
 
-interface TeamBasic {
-  id: number;
-  name: string;
-  code: string;
-  members: { id: number; name: string; email: string; role: string; position: string }[];
-}
+function EditMemberModal({
+  member,
+  onClose,
+  onSave,
+}: {
+  member: DisplayMember;
+  onClose: () => void;
+  onSave: (data: { name: string; email: string; position: string; password: string }) => Promise<void>;
+}) {
+  const [name, setName] = useState(member.name);
+  const [email, setEmail] = useState(member.email);
+  const [position, setPosition] = useState(member.position);
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-async function getTeam(teamId: number): Promise<TeamBasic> {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}`, {
-    method: 'GET',
-    headers: getHeaders(),
-  });
-  if (!res.ok) throw new Error('No se pudo obtener el equipo');
-  return res.json();
+  const handleSubmit = async () => {
+    if (!name.trim() || !email.trim() || !position.trim()) {
+      setError('Nombre, correo y cargo son obligatorios.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onSave({
+        name: name.trim(),
+        email: email.trim(),
+        position: position.trim(),
+        password: password.trim(),
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar los cambios.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)' }}>
+      <div style={{ backgroundColor: '#0D1520', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', width: '100%', maxWidth: '440px', margin: '16px' }}>
+        <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '700' }}>Editar miembro</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280' }}>×</button>
+        </div>
+        <div style={{ padding: '18px 22px' }} className="space-y-3">
+          <div>
+            <label style={{ color: '#9CA3AF', fontSize: '12px', display: 'block', marginBottom: '5px' }}>Nombre *</label>
+            <input value={name} onChange={e => setName(e.target.value)} style={FIELD_STYLE} />
+          </div>
+          <div>
+            <label style={{ color: '#9CA3AF', fontSize: '12px', display: 'block', marginBottom: '5px' }}>Correo *</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={FIELD_STYLE} />
+          </div>
+          <div>
+            <label style={{ color: '#9CA3AF', fontSize: '12px', display: 'block', marginBottom: '5px' }}>Cargo *</label>
+            <input value={position} onChange={e => setPosition(e.target.value)} style={FIELD_STYLE} />
+          </div>
+          <div>
+            <label style={{ color: '#9CA3AF', fontSize: '12px', display: 'block', marginBottom: '5px' }}>Nueva contraseña (opcional)</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Dejar vacío para no cambiar" style={FIELD_STYLE} />
+          </div>
+          {error && <p style={{ color: '#F87171', fontSize: '12px' }}>{error}</p>}
+          <div className="flex gap-3 pt-1">
+            <button onClick={onClose} style={{ flex: 1, padding: '10px', backgroundColor: 'rgba(255,255,255,0.05)', color: '#9CA3AF', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '9px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+              Cancelar
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              style={{ flex: 2, padding: '10px', backgroundColor: loading ? '#1A2235' : ACCENT, color: loading ? '#4B5563' : 'white', border: 'none', borderRadius: '9px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600' }}
+            >
+              {loading ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function TeamManagement() {
@@ -46,21 +121,24 @@ export function TeamManagement() {
   const [members, setMembers] = useState<DisplayMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [editingMember, setEditingMember] = useState<DisplayMember | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  useEffect(() => {
+  const loadMembers = useCallback(() => {
     if (!user?.teamId) return;
     setLoading(true);
-
-    Promise.all([getTeam(user.teamId), getTeamProfiles(user.teamId)])
+    Promise.all([getTeamById(user.teamId), getTeamProfiles(user.teamId)])
       .then(([team, profiles]) => {
         setTeamCode(team.code);
-
-        const merged: DisplayMember[] = team.members.map((m, idx) => {
+        const merged: DisplayMember[] = (team.members ?? []).map((m: any, idx: number) => {
           const profile = profiles.find(p => p.userId === m.id);
           return {
             id: m.id,
             name: m.name,
             email: m.email,
+            position: m.position ?? '',
+            systemRole: m.role === 'LEADER' ? 'LEADER' : 'MEMBER',
             role: m.role === 'LEADER' ? 'Team Leader' : (m.position || 'Miembro'),
             initials: getInitials(m.name),
             color: COLORS[idx % COLORS.length],
@@ -69,18 +147,54 @@ export function TeamManagement() {
             skills: profile?.abilities ?? [],
           };
         });
-
         setMembers(merged);
         setError(null);
       })
       .catch(() => setError('No se pudo cargar el equipo.'))
       .finally(() => setLoading(false));
-  }, [user]);
+  }, [user?.teamId]);
+
+  useEffect(() => {
+    loadMembers();
+  }, [loadMembers]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(teamCode).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const canManageMember = (member: DisplayMember) =>
+    member.systemRole === 'MEMBER' && member.id !== user?.id;
+
+  const handleSaveMember = async (memberId: number, data: { name: string; email: string; position: string; password: string }) => {
+    setActionError(null);
+    const payload: { name: string; email: string; position: string; password?: string } = {
+      name: data.name,
+      email: data.email,
+      position: data.position,
+    };
+    if (data.password) payload.password = data.password;
+    await updateUser(memberId, payload);
+    loadMembers();
+  };
+
+  const handleDeleteMember = async (member: DisplayMember) => {
+    if (!canManageMember(member)) return;
+    const confirmed = confirm(
+      `¿Eliminar a ${member.name} del equipo?\n\nSe desactivarán sus asignaciones y se eliminará su perfil.`
+    );
+    if (!confirmed) return;
+    setDeletingId(member.id);
+    setActionError(null);
+    try {
+      await deleteUser(member.id);
+      loadMembers();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo eliminar al miembro.');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   if (loading) return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando equipo...</div>;
@@ -99,24 +213,25 @@ export function TeamManagement() {
               border: `1px solid ${copied ? 'rgba(16,185,129,0.3)' : 'rgba(91,141,239,0.3)'}`,
               borderRadius: '8px', padding: '5px 12px', color: copied ? '#10B981' : ACCENT,
               fontSize: '13px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s',
-              letterSpacing: '1px'
+              letterSpacing: '1px',
             }}
           >
-            {copied ? (
-              <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg> ¡Copiado!</>
-            ) : (
-              <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg> {teamCode}</>
-            )}
+            {copied ? '¡Copiado!' : teamCode}
           </button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: '#6B7280', fontSize: '13px' }}>{members.length} miembros activos</span>
-        </div>
+        <span style={{ color: '#6B7280', fontSize: '13px' }}>{members.length} miembros activos</span>
       </div>
+
+      {actionError && (
+        <div style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#F87171', fontSize: '12px' }}>
+          {actionError}
+        </div>
+      )}
 
       <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
         {members.map(member => {
           const saturation = member.hoursMax > 0 ? member.hoursUsed / member.hoursMax : 0;
+          const manageable = canManageMember(member);
           return (
             <div
               key={member.id}
@@ -141,22 +256,19 @@ export function TeamManagement() {
                   <span style={{ color: '#6B7280', fontSize: '12px' }}>Horas de trabajo utilizadas</span>
                   <span style={{
                     color: saturation > 0.85 ? '#EF4444' : saturation > 0.6 ? '#F59E0B' : '#10B981',
-                    fontSize: '12px', fontWeight: '700'
+                    fontSize: '12px', fontWeight: '700',
                   }}>{member.hoursUsed}/{member.hoursMax}h</span>
                 </div>
                 <div style={{ height: '6px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden' }}>
                   <div style={{
                     height: '100%', width: `${saturation * 100}%`,
                     backgroundColor: saturation > 0.85 ? '#EF4444' : saturation > 0.6 ? '#F59E0B' : member.color,
-                    borderRadius: '999px', transition: 'width 0.5s ease'
+                    borderRadius: '999px', transition: 'width 0.5s ease',
                   }} />
                 </div>
-                {saturation > 0.85 && (
-                  <p style={{ color: '#EF4444', fontSize: '10px', marginTop: '4px' }}>⚠ Cerca del límite de horas</p>
-                )}
               </div>
 
-              <div>
+              <div style={{ marginBottom: manageable ? '14px' : 0 }}>
                 <p style={{ color: '#4B5563', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Habilidades</p>
                 <div className="flex flex-wrap gap-1.5">
                   {member.skills.length === 0 ? (
@@ -169,7 +281,7 @@ export function TeamManagement() {
                           backgroundColor: `${member.color}12`,
                           border: `1px solid ${member.color}30`,
                           color: member.color, fontSize: '11px', fontWeight: '500',
-                          padding: '3px 9px', borderRadius: '999px'
+                          padding: '3px 9px', borderRadius: '999px',
                         }}
                       >
                         {skill}
@@ -178,10 +290,46 @@ export function TeamManagement() {
                   )}
                 </div>
               </div>
+
+              {manageable && (
+                <div className="flex gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <button
+                    onClick={() => setEditingMember(member)}
+                    style={{
+                      flex: 1, padding: '8px', backgroundColor: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px',
+                      color: '#D1D5DB', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                    }}
+                  >
+                    Editar
+                  </button>
+                  <button
+                    onClick={() => handleDeleteMember(member)}
+                    disabled={deletingId === member.id}
+                    style={{
+                      flex: 1, padding: '8px', backgroundColor: 'rgba(239,68,68,0.1)',
+                      border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px',
+                      color: '#F87171', fontSize: '12px', fontWeight: '600',
+                      cursor: deletingId === member.id ? 'not-allowed' : 'pointer',
+                      opacity: deletingId === member.id ? 0.6 : 1,
+                    }}
+                  >
+                    {deletingId === member.id ? 'Eliminando...' : 'Eliminar'}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+
+      {editingMember && (
+        <EditMemberModal
+          member={editingMember}
+          onClose={() => setEditingMember(null)}
+          onSave={data => handleSaveMember(editingMember.id, data)}
+        />
+      )}
     </div>
   );
 }
