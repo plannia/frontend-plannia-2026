@@ -1,32 +1,58 @@
-import React from 'react';
-import { tasks, categories } from './mockData';
+import React, { useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import BASE_URL, { getHeaders } from '../services/api';
+import { getAssignmentsByUser } from '../services/assignmentService';
+import { getCategoriesByTeam } from '../services/categoryService';
+import { getTasksByTeam, TaskResource } from '../services/taskService';
 
-const BG = '#0F1419';
 const CARD_BG = '#141C2B';
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
-
-const MEMBER_NAME = 'Ana García';
-const MEMBER_CATEGORIES = categories
-  .filter(c => c.memberIds.includes(1))
-  .map(c => c.name); // ['Diseño UI', 'Frontend']
-
-const anaTasks = tasks.filter(t => t.assignedTo === MEMBER_NAME);
-
-const activityFeed = [
-  { id: 1, category: 'Diseño UI', isPrivate: false, title: '"Rediseño pantalla de login"', detail: 'fue actualizada a En Progreso', time: 'hace 10 min', actor: 'Tú' },
-  { id: 2, category: 'Backend', isPrivate: true, time: 'hace 1 hora', actor: 'Carlos López', taskName: 'Integración de pagos Stripe' },
-  { id: 3, category: 'Backend', isPrivate: true, time: 'hace 2 horas', actor: 'IA', taskName: 'Optimización de queries BD' },
-  { id: 4, category: null, isPrivate: false, title: 'Laura Sánchez', detail: 'se unió al equipo con código PL-2026', time: 'hace 5 horas', actor: 'Sistema' },
-  { id: 5, category: 'Infraestructura', isPrivate: true, time: 'ayer', actor: 'Diego Martínez', taskName: 'Configuración de servidores' },
-  { id: 6, category: 'Frontend', isPrivate: false, title: '"Corrección de estilos en dashboard"', detail: 'fue marcada como Completada', time: 'ayer', actor: 'Tú' },
-];
 
 const urgencyColor: Record<string, string> = {
   'Baja': '#10B981',
   'Media': '#F59E0B',
   'Alta': '#EF4444',
   'Crítica': '#EC4899',
+};
+
+interface MemberTask {
+  id: number;
+  title: string;
+  category: string;
+  status: 'Pendiente' | 'En progreso' | 'Completada' | 'Cancelada';
+  urgency: 'Baja' | 'Media' | 'Alta';
+  dueDate?: string;
+}
+
+interface NotificationItem {
+  id: number;
+  message: string;
+  channel?: string;
+}
+
+const toDateInputValue = (iso?: string) => iso ? iso.slice(0, 10) : '';
+
+const statusToUi = (status: TaskResource['status']): MemberTask['status'] => {
+  if (status === 'IN_PROGRESS') return 'En progreso';
+  if (status === 'DONE') return 'Completada';
+  if (status === 'CANCELLED') return 'Cancelada';
+  return 'Pendiente';
+};
+
+const priorityToUi = (priority: TaskResource['priority']): MemberTask['urgency'] => {
+  if (priority === 'LOW') return 'Baja';
+  if (priority === 'HIGH') return 'Alta';
+  return 'Media';
+};
+
+const getUserNotifications = async (userId: number): Promise<NotificationItem[]> => {
+  const response = await fetch(`${BASE_URL}/notifications/users/${userId}`, {
+    headers: getHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Error al obtener notificaciones');
+  return data;
 };
 
 function ActivityIcon({ muted }: { muted?: boolean }) {
@@ -59,9 +85,65 @@ function StatCard({ label, count, color, icon }: { label: string; count: number;
 }
 
 export function MemberDashboard() {
-  const pendiente = anaTasks.filter(t => t.status === 'Pendiente').length;
-  const enProgreso = anaTasks.filter(t => t.status === 'En progreso').length;
-  const completada = anaTasks.filter(t => t.status === 'Completada').length;
+  const { user } = useAuth();
+  const [memberTasks, setMemberTasks] = useState<MemberTask[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      if (!user?.id || !user?.teamId) {
+        setLoading(false);
+        setError('No se encontró un usuario o equipo asociado.');
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const [assignments, teamTasks, teamCategories, userNotifications] = await Promise.all([
+          getAssignmentsByUser(user.id),
+          getTasksByTeam(user.teamId),
+          getCategoriesByTeam(user.teamId),
+          getUserNotifications(user.id).catch(() => []),
+        ]);
+
+        const assignedTaskIds = new Set(assignments.map(assignment => assignment.taskId));
+        const categoryNames = teamCategories.reduce<Record<number, string>>((acc: Record<number, string>, category: any) => {
+          acc[category.id] = category.name;
+          return acc;
+        }, {});
+
+        const tasks = teamTasks
+          .filter(task => assignedTaskIds.has(task.id))
+          .map(task => ({
+            id: task.id,
+            title: task.title,
+            category: categoryNames[task.categoryId] ?? `Categoría ${task.categoryId}`,
+            status: statusToUi(task.status),
+            urgency: priorityToUi(task.priority),
+            dueDate: toDateInputValue(task.limitDate),
+          }));
+
+        setMemberTasks(tasks);
+        setNotifications(userNotifications);
+      } catch {
+        setError('No se pudo cargar el dashboard.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboard();
+  }, [user?.id, user?.teamId]);
+
+  const pendiente = memberTasks.filter(t => t.status === 'Pendiente').length;
+  const enProgreso = memberTasks.filter(t => t.status === 'En progreso').length;
+  const completada = memberTasks.filter(t => t.status === 'Completada').length;
+
+  if (loading) {
+    return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando dashboard...</div>;
+  }
 
   return (
     <div className="p-6">
@@ -69,7 +151,7 @@ export function MemberDashboard() {
       <div className="flex items-center gap-3 mb-6">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <h1 style={{ color: 'white', fontSize: '24px', fontWeight: '800' }}>Hola, Ana García</h1>
+            <h1 style={{ color: 'white', fontSize: '24px', fontWeight: '800' }}>Hola, {user?.name ?? 'Miembro'}</h1>
             <span style={{ backgroundColor: `${PURPLE}20`, color: PURPLE, fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '999px', border: `1px solid ${PURPLE}30` }}>
               Miembro
             </span>
@@ -77,6 +159,12 @@ export function MemberDashboard() {
           <p style={{ color: '#4B5563', fontSize: '13px' }}>Aquí tienes un resumen de tus tareas y la actividad del equipo.</p>
         </div>
       </div>
+
+      {error && (
+        <div style={{ marginBottom: '16px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', color: '#F59E0B', fontSize: '12px' }}>
+          {error}
+        </div>
+      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-3 gap-4 mb-7">
@@ -104,16 +192,20 @@ export function MemberDashboard() {
       <div style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', marginBottom: '20px', overflow: 'hidden' }}>
         <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ color: 'white', fontSize: '14px', fontWeight: '700' }}>Mis tareas recientes</span>
-          <span style={{ color: '#4B5563', fontSize: '12px' }}>{anaTasks.length} tareas asignadas</span>
+          <span style={{ color: '#4B5563', fontSize: '12px' }}>{memberTasks.length} tareas asignadas</span>
         </div>
         <div>
-          {anaTasks.map((task, i) => (
+          {memberTasks.length === 0 ? (
+            <div style={{ padding: '26px 20px', textAlign: 'center' }}>
+              <p style={{ color: '#4B5563', fontSize: '13px' }}>No tienes tareas asignadas.</p>
+            </div>
+          ) : memberTasks.map((task, i) => (
             <div
               key={task.id}
               style={{
                 display: 'flex', alignItems: 'center', gap: '12px',
                 padding: '12px 20px',
-                borderBottom: i < anaTasks.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                borderBottom: i < memberTasks.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
               }}
             >
               <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: urgencyColor[task.urgency] ?? '#6B7280', flexShrink: 0 }} />
@@ -146,53 +238,28 @@ export function MemberDashboard() {
           <span style={{ color: 'white', fontSize: '14px', fontWeight: '700' }}>Actividad del equipo</span>
         </div>
         <div>
-          {activityFeed.map((item, i) => {
-            const isInMemberCategory = item.category === null || MEMBER_CATEGORIES.includes(item.category);
-            const show = !item.isPrivate && isInMemberCategory;
-
-            return (
+          {notifications.length === 0 ? (
+            <div style={{ padding: '26px 20px', textAlign: 'center' }}>
+              <p style={{ color: '#4B5563', fontSize: '13px' }}>No hay actividad reciente.</p>
+            </div>
+          ) : notifications.map((item, i) => (
               <div
                 key={item.id}
                 style={{
                   display: 'flex', alignItems: 'flex-start', gap: '12px',
                   padding: '12px 20px',
-                  borderBottom: i < activityFeed.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                  borderBottom: i < notifications.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
                 }}
               >
-                {show ? (
-                  <>
-                    <ActivityIcon />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ color: 'white', fontSize: '12px', fontWeight: '500', lineHeight: '1.5' }}>
-                        {item.title && <span style={{ fontWeight: '700' }}>{item.title} </span>}
-                        <span style={{ color: '#9CA3AF' }}>{item.detail}</span>
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {item.category && (
-                          <span style={{ color: ACCENT, fontSize: '10px', fontWeight: '600' }}>{item.category}</span>
-                        )}
-                        <span style={{ color: '#374151', fontSize: '10px' }}>·</span>
-                        <span style={{ color: '#4B5563', fontSize: '10px' }}>{item.time}</span>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <ActivityIcon muted />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ color: '#6B7280', fontSize: '12px', lineHeight: '1.5' }}>
-                        <span style={{ color: '#9CA3AF', fontWeight: '600' }}>{item.actor}</span>
-                        {' '}
-                        <span>actualizó </span>
-                        <span style={{ color: '#6B7280', fontWeight: '500' }}>"{item.taskName}"</span>
-                      </p>
-                      <span style={{ color: '#374151', fontSize: '10px' }}>{item.time}</span>
-                    </div>
-                  </>
-                )}
+                <ActivityIcon />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ color: 'white', fontSize: '12px', fontWeight: '500', lineHeight: '1.5' }}>
+                    {item.message}
+                  </p>
+                  {item.channel && <span style={{ color: ACCENT, fontSize: '10px', fontWeight: '600' }}>{item.channel}</span>}
+                </div>
               </div>
-            );
-          })}
+          ))}
         </div>
       </div>
     </div>
