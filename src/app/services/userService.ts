@@ -1,6 +1,15 @@
 import BASE_URL, { getHeaders } from './api';
 
-export const getUserById = async (userId: number) => {
+export interface UserResource {
+  id: number;
+  name: string;
+  email: string;
+  position: string;
+  role: 'LEADER' | 'MEMBER';
+  teamId?: number;
+}
+
+export const getUserById = async (userId: number): Promise<UserResource> => {
   const response = await fetch(`${BASE_URL}/users/${userId}`, {
     headers: getHeaders(),
   });
@@ -11,25 +20,28 @@ export const getUserById = async (userId: number) => {
 
 export const updateUser = async (
   userId: number,
-  payload: { name: string; email: string; position: string; password?: string }
-) => {
+  data: { name?: string; email?: string; position?: string; password?: string }
+): Promise<UserResource> => {
   const response = await fetch(`${BASE_URL}/users/${userId}`, {
     method: 'PUT',
     headers: getHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(data),
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || 'Error al actualizar usuario');
-  return data;
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.message || 'Error al actualizar usuario');
+  return body;
 };
 
-export const deleteUser = async (userId: number) => {
+export const deleteUser = async (userId: number): Promise<void> => {
   const response = await fetch(`${BASE_URL}/users/${userId}`, {
     method: 'DELETE',
     headers: getHeaders(),
   });
-  if (!response.ok && response.status !== 204) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || 'Error al eliminar usuario');
+  if (response.status === 204) return;
+  const body = response.headers.get('content-type')?.includes('json')
+    ? await response.json()
+    : null;
+  if (!response.ok) {
+    throw new Error(body?.message || 'Error al eliminar usuario');
   }
 };

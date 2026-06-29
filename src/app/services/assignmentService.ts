@@ -18,37 +18,50 @@ export interface AssignmentResource {
   status: string;
 }
 
-const readJson = async (response: Response) => {
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
-};
-
-const assertOk = async <T>(response: Response, fallback: string): Promise<T> => {
-  const data = await readJson(response);
-  if (!response.ok) throw new Error(data?.message || fallback);
-  return data;
-};
-
-export const getAssignmentCandidates = async (taskId: number, teamId: number) => {
+export const getRecommendedCandidates = async (
+  taskId: number,
+  teamId: number
+): Promise<CandidateProfileResource[]> => {
   const response = await fetch(`${BASE_URL}/assignments/recommend/${taskId}/team/${teamId}`, {
     headers: getHeaders(),
   });
-  return assertOk<CandidateProfileResource[]>(response, 'Error al obtener candidatos de asignación');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Error al obtener candidatos');
+  return data;
 };
 
-export const confirmAssignmentRecommendation = async (taskId: number, userId: number) => {
+export const confirmAssignmentRecommendation = async (
+  taskId: number,
+  userId: number
+): Promise<AssignmentResource> => {
   const response = await fetch(`${BASE_URL}/assignments/recommend/confirm`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ taskId, userId }),
   });
-  return assertOk<AssignmentResource>(response, 'Error al confirmar asignación');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Error al confirmar asignación');
+  return data;
 };
 
-export const completeAssignment = async (taskId: number) => {
+export const getAssignmentsByUser = async (userId: number): Promise<AssignmentResource[]> => {
+  const response = await fetch(`${BASE_URL}/assignments/users/${userId}`, {
+    headers: getHeaders(),
+  });
+  if (response.status === 404) return [];
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : [];
+  if (!response.ok) throw new Error(data.message || 'Error al obtener asignaciones');
+  return data;
+};
+
+export const completeAssignment = async (taskId: number): Promise<AssignmentResource> => {
   const response = await fetch(`${BASE_URL}/assignments/complete/${taskId}`, {
     method: 'PATCH',
     headers: getHeaders(),
   });
-  return assertOk<AssignmentResource>(response, 'Error al completar asignación');
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data.message || 'Error al completar asignación');
+  return data;
 };

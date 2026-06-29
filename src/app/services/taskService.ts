@@ -4,66 +4,73 @@ export interface TaskResource {
   id: number;
   categoryId: number;
   title: string;
-  description?: string;
+  description: string;
   hours: number;
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | string;
-  difficulty: 'EASY' | 'MEDIUM' | 'HARD' | string;
-  status: 'TO_DO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED' | string;
-  limitDate?: string;
-  tools?: string[];
-  knowledge?: string[];
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD';
+  status: 'TO_DO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
+  limitDate: string;
+  tools: string[];
+  knowledge: string[];
+  startTime?: string;
+  endTime?: string;
 }
 
-export interface CreateTaskPayload {
+export interface CreateTaskResource {
   categoryId: number;
   title: string;
   description: string;
   hours: number;
-  priority: string;
-  difficulty: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD';
   limitDate: string;
   tools: string[];
   knowledge: string[];
 }
 
-const readJson = async (response: Response) => {
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
-};
+export interface UpdateTaskResource {
+  status: 'TO_DO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
+  limitDate: string;
+}
 
-const assertOk = async <T>(response: Response, fallback: string): Promise<T> => {
-  const data = await readJson(response);
-  if (!response.ok) throw new Error(data?.message || fallback);
+export const getTasksByTeam = async (
+  teamId: number,
+  filters?: { categoryId?: number; status?: string; userId?: number; title?: string; description?: string; priority?: string; difficulty?: string }
+): Promise<TaskResource[]> => {
+  const params = new URLSearchParams();
+  if (filters) {
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') params.append(key, String(value));
+    });
+  }
+  const query = params.toString() ? `?${params.toString()}` : '';
+  const response = await fetch(`${BASE_URL}/tasks/teams/${teamId}${query}`, {
+    headers: getHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Error al obtener tareas');
   return data;
 };
 
-export const getTasksByTeam = async (teamId: number, filters: Record<string, string> = {}) => {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value) params.set(key, value);
-  });
-
-  const query = params.toString();
-  const response = await fetch(`${BASE_URL}/tasks/teams/${teamId}${query ? `?${query}` : ''}`, {
-    headers: getHeaders(),
-  });
-  return assertOk<TaskResource[]>(response, 'Error al obtener tareas');
-};
-
-export const createTask = async (payload: CreateTaskPayload) => {
+export const createTask = async (task: CreateTaskResource): Promise<TaskResource> => {
   const response = await fetch(`${BASE_URL}/tasks`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(task),
   });
-  return assertOk<TaskResource>(response, 'Error al crear tarea');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Error al crear tarea');
+  return data;
 };
 
-export const updateTask = async (taskId: number, payload: { status: string; limitDate: string }) => {
+export const updateTask = async (taskId: number, task: UpdateTaskResource): Promise<TaskResource> => {
   const response = await fetch(`${BASE_URL}/tasks/${taskId}`, {
     method: 'PUT',
     headers: getHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(task),
   });
-  return assertOk<TaskResource>(response, 'Error al actualizar tarea');
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data.message || 'Error al actualizar tarea');
+  return data;
 };

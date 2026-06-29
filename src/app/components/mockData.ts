@@ -1,4 +1,4 @@
-export type TaskStatus = 'Pendiente' | 'En progreso' | 'Completada';
+export type TaskStatus = 'Pendiente' | 'En progreso' | 'Completada' | 'Cancelada';
 export type TaskUrgency = 'Baja' | 'Media' | 'Alta' | 'Crítica';
 export type CategoryStatus = 'TO_DO' | 'IN_PROGRESS' | 'DONE';
 

@@ -1,11 +1,13 @@
-import { useState } from 'react';
-import { tasks as allTasks, Task, TaskStatus } from './mockData';
+import { useEffect, useState } from 'react';
+import { Task, TaskStatus, TaskUrgency } from './mockData';
+import { useAuth } from '../context/AuthContext';
+import { getAssignmentsByUser } from '../services/assignmentService';
+import { getCategoriesByTeam } from '../services/categoryService';
+import { getTasksByTeam, TaskResource, updateTask } from '../services/taskService';
 
 const CARD_BG = '#141C2B';
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
-
-const MEMBER_NAME = 'Ana García';
 
 const urgencyColor: Record<string, string> = {
   'Baja': '#10B981',
@@ -27,9 +29,54 @@ const statusColors: Record<TaskStatus, { color: string; bg: string }> = {
   'Pendiente': { color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
   'En progreso': { color: ACCENT, bg: `${ACCENT}18` },
   'Completada': { color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
+  'Cancelada': { color: '#9CA3AF', bg: 'rgba(107,114,128,0.12)' },
 };
 
-function DetailSidebar({ task, onClose, onSave }: { task: Task; onClose: () => void; onSave: (id: number, status: TaskStatus) => void }) {
+const toDateInputValue = (iso?: string) => iso ? iso.slice(0, 10) : '';
+const toLimitDateISO = (dateInput: string) => `${dateInput}T23:59:59`;
+
+const priorityToUi = (priority: TaskResource['priority']): TaskUrgency => {
+  if (priority === 'LOW') return 'Baja';
+  if (priority === 'HIGH') return 'Alta';
+  return 'Media';
+};
+
+const difficultyToUi = (difficulty: TaskResource['difficulty']) => {
+  if (difficulty === 'EASY') return 'Fácil';
+  if (difficulty === 'HARD') return 'Difícil';
+  return 'Media';
+};
+
+const statusToUi = (status: TaskResource['status']): TaskStatus => {
+  if (status === 'IN_PROGRESS') return 'En progreso';
+  if (status === 'DONE') return 'Completada';
+  if (status === 'CANCELLED') return 'Cancelada';
+  return 'Pendiente';
+};
+
+const statusToApi = (status: TaskStatus): 'TO_DO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED' => {
+  if (status === 'En progreso') return 'IN_PROGRESS';
+  if (status === 'Completada') return 'DONE';
+  if (status === 'Cancelada') return 'CANCELLED';
+  return 'TO_DO';
+};
+
+const taskToUi = (task: TaskResource, categoryName: string): Task => ({
+  id: task.id,
+  title: task.title,
+  category: categoryName,
+  status: statusToUi(task.status),
+  assignedTo: '',
+  estimatedTime: `${task.hours ?? 0}h`,
+  urgency: priorityToUi(task.priority),
+  description: task.description,
+  difficulty: difficultyToUi(task.difficulty),
+  dueDate: toDateInputValue(task.limitDate),
+  tools: task.tools?.join(', ') ?? '',
+  knowledge: task.knowledge?.join(', ') ?? '',
+});
+
+function DetailSidebar({ task, saving, onClose, onSave }: { task: Task; saving: boolean; onClose: () => void; onSave: (id: number, status: TaskStatus) => void }) {
   const [selectedStatus, setSelectedStatus] = useState<TaskStatus>(task.status);
   const hasChange = selectedStatus !== task.status;
 
@@ -144,20 +191,20 @@ function DetailSidebar({ task, onClose, onSave }: { task: Task; onClose: () => v
         {/* Footer — Guardar cambios only */}
         <div style={{ padding: '14px 20px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           <button
-            onClick={() => { onSave(task.id, selectedStatus); onClose(); }}
-            disabled={!hasChange}
+            onClick={() => onSave(task.id, selectedStatus)}
+            disabled={!hasChange || saving}
             style={{
               width: '100%',
-              background: hasChange ? `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` : 'rgba(255,255,255,0.05)',
-              color: hasChange ? 'white' : '#374151',
+              background: hasChange && !saving ? `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` : 'rgba(255,255,255,0.05)',
+              color: hasChange && !saving ? 'white' : '#374151',
               borderRadius: '9px', padding: '11px', border: 'none',
-              cursor: hasChange ? 'pointer' : 'not-allowed',
+              cursor: hasChange && !saving ? 'pointer' : 'not-allowed',
               fontSize: '13px', fontWeight: '700',
-              boxShadow: hasChange ? `0 4px 14px ${ACCENT}30` : 'none',
+              boxShadow: hasChange && !saving ? `0 4px 14px ${ACCENT}30` : 'none',
               transition: 'all 0.18s',
             }}
           >
-            Guardar cambios
+            {saving ? 'Guardando...' : 'Guardar cambios'}
           </button>
         </div>
       </div>
@@ -166,12 +213,67 @@ function DetailSidebar({ task, onClose, onSave }: { task: Task; onClose: () => v
 }
 
 export function MisTareas() {
-  const [tasks, setTasks] = useState(allTasks.filter(t => t.assignedTo === MEMBER_NAME));
+  const { user } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskResources, setTaskResources] = useState<TaskResource[]>([]);
   const [selected, setSelected] = useState<Task | null>(null);
   const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSave = (id: number, status: TaskStatus) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+  const loadTasks = async () => {
+    if (!user?.id || !user?.teamId) {
+      setLoading(false);
+      setError('No se encontró un usuario o equipo asociado.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const [assignments, teamTasks, categories] = await Promise.all([
+        getAssignmentsByUser(user.id),
+        getTasksByTeam(user.teamId),
+        getCategoriesByTeam(user.teamId),
+      ]);
+      const assignedTaskIds = new Set(assignments.map(assignment => assignment.taskId));
+      const categoryNames = categories.reduce<Record<number, string>>((acc: Record<number, string>, category: any) => {
+        acc[category.id] = category.name;
+        return acc;
+      }, {});
+      const myTaskResources = teamTasks.filter(task => assignedTaskIds.has(task.id));
+      setTaskResources(myTaskResources);
+      setTasks(myTaskResources.map(task => taskToUi(task, categoryNames[task.categoryId] ?? `Categoría ${task.categoryId}`)));
+    } catch {
+      setError('No se pudieron cargar tus tareas.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTasks();
+  }, [user?.id, user?.teamId]);
+
+  const handleSave = async (id: number, status: TaskStatus) => {
+    const currentResource = taskResources.find(task => task.id === id);
+    if (!currentResource) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateTask(id, {
+        status: statusToApi(status),
+        limitDate: toLimitDateISO(toDateInputValue(currentResource.limitDate)),
+      });
+      const nextResource = updated ?? { ...currentResource, status: statusToApi(status) };
+      setTaskResources(prev => prev.map(task => task.id === id ? nextResource : task));
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+      setSelected(prev => prev?.id === id ? { ...prev, status } : prev);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo actualizar la tarea.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const q = search.toLowerCase();
@@ -181,6 +283,10 @@ export function MisTareas() {
     (t.dueDate ?? '').includes(q) ||
     t.category.toLowerCase().includes(q)
   );
+
+  if (loading) {
+    return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando mis tareas...</div>;
+  }
 
   return (
     <div className="p-6">
@@ -217,6 +323,12 @@ export function MisTareas() {
           </div>
         </div>
       </div>
+
+      {error && (
+        <div style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', color: '#F59E0B', fontSize: '12px' }}>
+          {error}
+        </div>
+      )}
 
       {/* Table */}
       <div style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', overflow: 'hidden' }}>
@@ -291,6 +403,7 @@ export function MisTareas() {
           task={selected}
           onClose={() => setSelected(null)}
           onSave={handleSave}
+          saving={saving}
         />
       )}
     </div>

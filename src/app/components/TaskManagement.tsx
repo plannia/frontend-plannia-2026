@@ -1,23 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Task, TaskStatus, TaskUrgency } from './mockData';
 import { useAuth } from '../context/AuthContext';
 import { getCategoriesByTeam } from '../services/categoryService';
-import { getDashboardTasks } from '../services/dashboardService';
-import { getTeamById } from '../services/teamService';
-import { getAssignmentCandidates, confirmAssignmentRecommendation, CandidateProfileResource } from '../services/assignmentService';
 import { createTask, getTasksByTeam, TaskResource, updateTask } from '../services/taskService';
-import { Task, TaskStatus, TaskUrgency } from './mockData';
-import { AIAssignmentModal } from './AIAssignmentModal';
+import { getTeamById } from '../services/teamService';
+import { confirmAssignmentRecommendation, getAssignmentsByUser, getRecommendedCandidates, CandidateProfileResource } from '../services/assignmentService';
 
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
 const CARD_BG = '#141C2B';
 const INPUT_BG = '#1A2235';
 const DRAWER_BG = '#0D1520';
+const PALETTE = ['#5B8DEF', '#7C6FE8', '#10B981', '#F59E0B', '#EC4899', '#EF4444', '#14B8A6', '#F97316'];
 
 const statusColors: Record<string, { bg: string; text: string }> = {
   'Pendiente': { bg: 'rgba(91,141,239,0.15)', text: '#5B8DEF' },
   'En progreso': { bg: 'rgba(124,111,232,0.15)', text: '#7C6FE8' },
   'Completada': { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
+  'Cancelada': { bg: 'rgba(107,114,128,0.18)', text: '#9CA3AF' },
 };
 
 const urgencyColors: Record<string, { bg: string; text: string }> = {
@@ -33,102 +33,128 @@ const FIELD_STYLE: React.CSSProperties = {
   fontSize: '13px', boxSizing: 'border-box', transition: 'border-color 0.15s'
 };
 
-interface CategoryOption {
+interface UICategory {
   id: number;
   name: string;
-  color?: string;
+  color: string;
 }
 
-interface TeamMemberOption {
+interface UITeamMember {
   id: number;
   name: string;
   email: string;
-  position?: string;
-  role?: string;
-  color: string;
+  role: string;
   initials: string;
-  hoursUsed: number;
-  hoursMax: number;
+  color: string;
 }
 
-const COLORS = ['#5B8DEF', '#7C6FE8', '#10B981', '#F59E0B', '#EC4899', '#EF4444'];
+interface UICandidate extends UITeamMember {
+  activeHours: number;
+  maxHours: number;
+  availableHours: number;
+}
 
-const getInitials = (name: string) => name.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) || 'US';
-const splitList = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
+const getInitials = (name: string) =>
+  name.split(' ').filter(Boolean).slice(0, 2).map(word => word[0]).join('').toUpperCase();
 
-const statusFromApi = (status: string): TaskStatus => {
-  if (status === 'IN_PROGRESS') return 'En progreso';
-  if (status === 'DONE') return 'Completada';
-  return 'Pendiente';
+const splitCsv = (value: string) =>
+  value.split(',').map(item => item.trim()).filter(Boolean);
+
+const toDateInputValue = (iso?: string) => iso ? iso.slice(0, 10) : '';
+const toLimitDateISO = (dateInput: string) => `${dateInput}T23:59:59`;
+
+const priorityToUi = (priority: TaskResource['priority']): TaskUrgency => {
+  const map: Record<TaskResource['priority'], TaskUrgency> = {
+    LOW: 'Baja',
+    MEDIUM: 'Media',
+    HIGH: 'Alta',
+  };
+  return map[priority] ?? 'Media';
 };
 
-const statusToApi = (status: TaskStatus) => {
-  if (status === 'En progreso') return 'IN_PROGRESS';
-  if (status === 'Completada') return 'DONE';
-  return 'TO_DO';
-};
-
-const priorityFromApi = (priority: string): TaskUrgency => {
-  if (priority === 'HIGH') return 'Alta';
-  if (priority === 'LOW') return 'Baja';
-  return 'Media';
-};
-
-const priorityToApi = (priority: TaskUrgency) => {
-  if (priority === 'Alta' || priority === 'Crítica') return 'HIGH';
+const priorityToApi = (priority: TaskUrgency): 'LOW' | 'MEDIUM' | 'HIGH' => {
   if (priority === 'Baja') return 'LOW';
+  if (priority === 'Alta' || priority === 'Crítica') return 'HIGH';
   return 'MEDIUM';
 };
 
-const difficultyFromApi = (difficulty: string) => {
-  if (difficulty === 'EASY') return 'Fácil';
-  if (difficulty === 'HARD') return 'Difícil';
-  return 'Media';
+const difficultyToUi = (difficulty: TaskResource['difficulty']) => {
+  const map: Record<TaskResource['difficulty'], string> = {
+    EASY: 'Fácil',
+    MEDIUM: 'Media',
+    HARD: 'Difícil',
+  };
+  return map[difficulty] ?? 'Media';
 };
 
-const difficultyToApi = (difficulty: string) => {
+const difficultyToApi = (difficulty: string): 'EASY' | 'MEDIUM' | 'HARD' => {
   if (difficulty === 'Fácil') return 'EASY';
   if (difficulty === 'Difícil') return 'HARD';
   return 'MEDIUM';
 };
 
-const toDateInput = (value?: string) => value ? value.split('T')[0] : '';
-const toIsoDateTime = (value: string) => new Date(`${value}T23:59:00`).toISOString();
+const statusToUi = (status: TaskResource['status']): TaskStatus => {
+  const map: Record<TaskResource['status'], TaskStatus> = {
+    TO_DO: 'Pendiente',
+    IN_PROGRESS: 'En progreso',
+    DONE: 'Completada',
+    CANCELLED: 'Cancelada' as TaskStatus,
+  };
+  return map[status] ?? 'Pendiente';
+};
+
+const statusToApi = (status: TaskStatus): 'TO_DO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED' => {
+  if (status === 'En progreso') return 'IN_PROGRESS';
+  if (status === 'Completada') return 'DONE';
+  if (status === 'Cancelada') return 'CANCELLED';
+  return 'TO_DO';
+};
+
+const taskToUi = (task: TaskResource, categories: UICategory[], assignmentNames: Record<number, string> = {}): Task => {
+  const category = categories.find(c => c.id === task.categoryId);
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description,
+    category: category?.name ?? `Categoría ${task.categoryId}`,
+    status: statusToUi(task.status),
+    assignedTo: assignmentNames[task.id] ?? '',
+    estimatedTime: `${task.hours ?? 0}h`,
+    urgency: priorityToUi(task.priority),
+    difficulty: difficultyToUi(task.difficulty),
+    dueDate: toDateInputValue(task.limitDate),
+    tools: task.tools?.join(', ') ?? '',
+    knowledge: task.knowledge?.join(', ') ?? '',
+  };
+};
 
 // ─── Assign Member Modal ──────────────────────────────────────────────────────
 
 interface AssignModalProps {
   task: Task;
-  members: TeamMemberOption[];
-  candidates: CandidateProfileResource[];
+  candidates: UICandidate[];
   loading: boolean;
+  saving: boolean;
   error: string | null;
   onClose: () => void;
-  onAssign: (memberId: number) => void;
+  onAssign: (userId: number) => void;
 }
 
-function AssignMemberModal({ task, members, candidates, loading, error, onClose, onAssign }: AssignModalProps) {
+function AssignMemberModal({ task, candidates, loading, saving, error, onClose, onAssign }: AssignModalProps) {
   const [selected, setSelected] = useState<number | null>(null);
-
-  const membersWithAffinity = members.map(member => {
-    const candidate = candidates.find(c => c.userId === member.id);
-    const availability = member.hoursMax > 0 ? Math.max(0, Math.min(1, (candidate?.availableHours ?? (member.hoursMax - member.hoursUsed)) / member.hoursMax)) : 0;
-    return { ...member, candidate, affinity: Math.round(availability * 100) };
-  }).sort((a, b) => b.affinity - a.affinity);
-
-  const recommended = membersWithAffinity.slice(0, 2);
-  const others = membersWithAffinity.slice(2);
 
   const handleConfirm = () => {
     if (selected === null) return;
     onAssign(selected);
-    onClose();
   };
 
-  function MemberCard({ member, isTop }: { member: typeof membersWithAffinity[0]; isTop?: boolean }) {
+  function MemberCard({ member, isTop }: { member: UICandidate; isTop?: boolean }) {
     const isSelected = selected === member.id;
-    const avail = member.hoursMax - member.hoursUsed;
-    const saturation = member.hoursUsed / member.hoursMax;
+    const maxHours = member.maxHours || 0;
+    const activeHours = member.activeHours || 0;
+    const availableHours = member.availableHours ?? Math.max(maxHours - activeHours, 0);
+    const availabilityPercent = maxHours > 0 ? Math.round((availableHours / maxHours) * 100) : 0;
+    const saturation = maxHours > 0 ? activeHours / maxHours : 0;
     const statusLabel = saturation < 0.5 ? 'Disponible' : saturation < 0.85 ? 'Parcialmente ocupado' : 'Saturado';
     const statusColor = saturation < 0.5 ? '#10B981' : saturation < 0.85 ? '#F59E0B' : '#EF4444';
 
@@ -165,29 +191,24 @@ function AssignMemberModal({ task, members, candidates, loading, error, onClose,
           </div>
         </div>
 
-        {/* Affinity bar */}
         <div className="mb-2.5">
           <div className="flex justify-between mb-1">
-            <span style={{ color: '#6B7280', fontSize: '10px' }}>Afinidad con la tarea</span>
-            <span style={{ color: member.color, fontSize: '10px', fontWeight: '700' }}>{member.affinity}%</span>
+            <span style={{ color: '#6B7280', fontSize: '10px' }}>Disponibilidad estimada</span>
+            <span style={{ color: member.color, fontSize: '10px', fontWeight: '700' }}>{availabilityPercent}%</span>
           </div>
           <div style={{ height: '4px', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: '999px', overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${member.affinity}%`, background: `linear-gradient(90deg, ${member.color}CC, ${member.color})`, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+            <div style={{ height: '100%', width: `${availabilityPercent}%`, background: `linear-gradient(90deg, ${member.color}CC, ${member.color})`, borderRadius: '999px', transition: 'width 0.6s ease' }} />
           </div>
         </div>
 
-        {/* Hours */}
         <div className="flex items-center justify-between mb-2.5">
           <span style={{ color: '#6B7280', fontSize: '11px' }}>Horas disponibles</span>
-          <span style={{ color: avail > 10 ? '#10B981' : avail > 4 ? '#F59E0B' : '#EF4444', fontSize: '11px', fontWeight: '600' }}>{avail}h libres</span>
+          <span style={{ color: availableHours > 10 ? '#10B981' : availableHours > 4 ? '#F59E0B' : '#EF4444', fontSize: '11px', fontWeight: '600' }}>
+            {availableHours}h libres de {maxHours}h
+          </span>
         </div>
 
-        {/* Profile */}
-        <div className="flex flex-wrap gap-1">
-          {[member.position, member.role].filter(Boolean).map(s => (
-            <span key={s} style={{ backgroundColor: `${member.color}12`, border: `1px solid ${member.color}28`, color: member.color, fontSize: '10px', padding: '1px 7px', borderRadius: '999px' }}>{s}</span>
-          ))}
-        </div>
+        <span style={{ backgroundColor: `${member.color}12`, border: `1px solid ${member.color}28`, color: member.color, fontSize: '10px', padding: '1px 7px', borderRadius: '999px' }}>{member.role}</span>
 
         {isSelected && (
           <div style={{ marginTop: '10px', padding: '6px 10px', backgroundColor: `${member.color}15`, borderRadius: '7px', textAlign: 'center' }}>
@@ -214,27 +235,19 @@ function AssignMemberModal({ task, members, candidates, loading, error, onClose,
 
         {/* Content */}
         <div style={{ overflowY: 'auto', padding: '16px 22px', flex: 1 }}>
-          {loading && <p style={{ color: '#6B7280', fontSize: '13px', marginBottom: '12px' }}>Cargando candidatos...</p>}
-          {error && <p style={{ color: '#EF4444', fontSize: '12px', marginBottom: '12px' }}>{error}</p>}
           {/* Recommended section */}
           <div style={{ marginBottom: '20px' }}>
             <div className="flex items-center gap-2 mb-3">
-              <span style={{ color: '#4B5563', fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Recomendados</span>
+              <span style={{ color: '#4B5563', fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Candidatos recomendados</span>
               <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(255,255,255,0.05)' }} />
             </div>
+            {loading && <p style={{ color: '#6B7280', fontSize: '13px' }}>Buscando candidatos...</p>}
+            {!loading && error && <p style={{ color: '#F59E0B', fontSize: '13px' }}>{error}</p>}
+            {!loading && !error && candidates.length === 0 && (
+              <p style={{ color: '#6B7280', fontSize: '13px' }}>No hay candidatos disponibles para esta tarea.</p>
+            )}
             <div className="space-y-2">
-              {recommended.map((m, i) => <MemberCard key={m.id} member={m} isTop={i === 0} />)}
-            </div>
-          </div>
-
-          {/* Others section */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span style={{ color: '#4B5563', fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Otros miembros</span>
-              <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(255,255,255,0.05)' }} />
-            </div>
-            <div className="space-y-2">
-              {others.map(m => <MemberCard key={m.id} member={m} />)}
+              {candidates.map((m, i) => <MemberCard key={m.id} member={m} isTop={i === 0} />)}
             </div>
           </div>
         </div>
@@ -246,14 +259,14 @@ function AssignMemberModal({ task, members, candidates, loading, error, onClose,
           </button>
           <button
             onClick={handleConfirm}
-            disabled={selected === null}
+            disabled={selected === null || saving}
             style={{
-              flex: 2, padding: '10px', backgroundColor: selected !== null ? ACCENT : '#1A2235',
-              color: selected !== null ? 'white' : '#4B5563', border: 'none', borderRadius: '9px',
-              cursor: selected !== null ? 'pointer' : 'not-allowed', fontSize: '13px', fontWeight: '700', transition: 'all 0.2s'
+              flex: 2, padding: '10px', backgroundColor: selected !== null && !saving ? ACCENT : '#1A2235',
+              color: selected !== null && !saving ? 'white' : '#4B5563', border: 'none', borderRadius: '9px',
+              cursor: selected !== null && !saving ? 'pointer' : 'not-allowed', fontSize: '13px', fontWeight: '700', transition: 'all 0.2s'
             }}
           >
-            Confirmar asignación
+            {saving ? 'Asignando...' : 'Confirmar asignación'}
           </button>
         </div>
       </div>
@@ -353,8 +366,8 @@ function EditTaskModal({ task, onClose, onSave }: {
 
 function TaskDetailDrawer({ task, categories, members, onClose, onStatusChange, onAssignClick, onEditClick }: {
   task: Task;
-  categories: CategoryOption[];
-  members: TeamMemberOption[];
+  categories: UICategory[];
+  members: UITeamMember[];
   onClose: () => void;
   onStatusChange: (id: number, s: TaskStatus) => void;
   onAssignClick: () => void;
@@ -518,104 +531,82 @@ function TaskDetailDrawer({ task, categories, members, onClose, onStatusChange, 
 export function TaskManagement() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [apiTasks, setApiTasks] = useState<TaskResource[]>([]);
-  const [dashboardTasks, setDashboardTasks] = useState<any[]>([]);
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
-  const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [taskResources, setTaskResources] = useState<TaskResource[]>([]);
+  const [categories, setCategories] = useState<UICategory[]>([]);
+  const [members, setMembers] = useState<UITeamMember[]>([]);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [showAI, setShowAI] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [assignLoading, setAssignLoading] = useState(false);
-  const [assignmentCandidates, setAssignmentCandidates] = useState<CandidateProfileResource[]>([]);
-  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<UICandidate[]>([]);
   const [focusedField, setFocusedField] = useState('');
   const [form, setForm] = useState({
     title: '', description: '', category: '', hours: '',
     priority: 'Media' as TaskUrgency, difficulty: 'Media', tools: '', knowledge: '', dueDate: ''
   });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const categoryById = useMemo(() => new Map(categories.map(category => [category.id, category])), [categories]);
-  const memberById = useMemo(() => new Map(teamMembers.map(member => [member.id, member])), [teamMembers]);
-
-  const mapTask = (task: TaskResource): Task => {
-    const dashboardTask = dashboardTasks.find(item => item.taskId === task.id);
-    const assignment = (task as any).assignment ?? (task as any).assignedUser ?? null;
-    const userId = assignment?.userId ?? (task as any).userId;
-    const member = userId ? memberById.get(userId) : undefined;
-    return {
-      id: task.id,
-      title: task.title,
-      description: task.description ?? '',
-      category: categoryById.get(task.categoryId)?.name ?? `Categoría ${task.categoryId}`,
-      status: statusFromApi(task.status),
-      assignedTo: dashboardTask?.userName ?? member?.name ?? '',
-      estimatedTime: `${task.hours ?? 0}h`,
-      urgency: priorityFromApi(task.priority),
-      difficulty: difficultyFromApi(task.difficulty),
-      tools: task.tools?.join(', ') ?? '',
-      knowledge: task.knowledge?.join(', ') ?? '',
-      dueDate: toDateInput(task.limitDate),
-    };
-  };
-
-  const loadData = async () => {
+  const loadTasks = async () => {
     if (!user?.teamId) {
       setLoading(false);
-      setError('No se encontró el equipo del usuario.');
+      setError('No se encontró un equipo asociado al usuario.');
       return;
     }
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      const [categoryData, team, taskData, dashboardTaskData] = await Promise.all([
-        getCategoriesByTeam(user.teamId),
+      const [teamData, categoriesData, tasksData] = await Promise.all([
         getTeamById(user.teamId),
+        getCategoriesByTeam(user.teamId),
         getTasksByTeam(user.teamId),
-        getDashboardTasks(user.teamId),
       ]);
-      const categoryOptions = categoryData.map((category: any, index: number) => ({
-        id: category.id,
-        name: category.name,
-        color: COLORS[index % COLORS.length],
-      }));
-      const memberOptions = (team.members ?? []).map((member: any, index: number) => ({
+      const uiMembers: UITeamMember[] = (teamData.members ?? []).map((member: any, index: number) => ({
         id: member.id,
         name: member.name,
         email: member.email,
-        position: member.position,
-        role: member.role,
-        color: COLORS[index % COLORS.length],
+        role: member.position ?? member.role ?? 'Miembro',
         initials: getInitials(member.name),
-        hoursUsed: 0,
-        hoursMax: 40,
+        color: PALETTE[index % PALETTE.length],
       }));
-      setCategories(categoryOptions);
-      setTeamMembers(memberOptions);
-      setApiTasks(taskData);
-      setDashboardTasks(dashboardTaskData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al cargar tareas');
+      const uiCategories: UICategory[] = categoriesData.map((category: any, index: number) => ({
+        id: category.id,
+        name: category.name,
+        color: PALETTE[index % PALETTE.length],
+      }));
+      const assignmentResults = await Promise.all(
+        uiMembers.map(member =>
+          getAssignmentsByUser(member.id)
+            .then(assignments => assignments.map(assignment => ({ ...assignment, memberName: member.name })))
+            .catch(() => [])
+        )
+      );
+      const assignmentNames = assignmentResults.flat().reduce<Record<number, string>>((acc, assignment) => {
+        acc[assignment.taskId] = assignment.memberName;
+        return acc;
+      }, {});
+      setMembers(uiMembers);
+      setCategories(uiCategories);
+      setTaskResources(tasksData);
+      setTasks(tasksData.map(task => taskToUi(task, uiCategories, assignmentNames)));
+    } catch {
+      setError('No se pudieron cargar las tareas.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData();
+    loadTasks();
   }, [user?.teamId]);
-
-  useEffect(() => {
-    setTasks(apiTasks.map(mapTask));
-  }, [apiTasks, dashboardTasks, categoryById, memberById]);
 
   const filtered = tasks.filter(t => {
     const q = search.toLowerCase();
@@ -626,38 +617,24 @@ export function TaskManagement() {
     );
   });
 
-  const getMember = (name: string) => teamMembers.find(m => m.name === name);
+  const getMember = (name: string) => members.find(m => m.name === name);
   const selectedTask = selectedTaskId != null ? tasks.find(t => t.id === selectedTaskId) : null;
 
-  const loadAssignmentCandidates = async (taskId: number) => {
-    if (!user?.teamId) return;
-    try {
-      setAssignLoading(true);
-      setAssignmentError(null);
-      const candidates = await getAssignmentCandidates(taskId, user.teamId);
-      setAssignmentCandidates(candidates);
-      setTeamMembers(prev => prev.map(member => {
-        const candidate = candidates.find(c => c.userId === member.id);
-        return candidate ? { ...member, hoursUsed: candidate.activeHours, hoursMax: candidate.maxHours } : member;
-      }));
-    } catch (err) {
-      setAssignmentCandidates([]);
-      setAssignmentError(err instanceof Error ? err.message : 'Error al cargar candidatos');
-    } finally {
-      setAssignLoading(false);
-    }
-  };
-
   const handleStatusChange = async (id: number, status: TaskStatus) => {
-    const current = tasks.find(task => task.id === id);
-    if (!current) return;
+    const previous = tasks;
+    const currentResource = taskResources.find(t => t.id === id);
+    if (!currentResource) return;
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
     try {
-      const updated = await updateTask(id, { status: statusToApi(status), limitDate: toIsoDateTime(current.dueDate || new Date().toISOString().split('T')[0]) });
-      setApiTasks(prev => prev.map(task => task.id === id ? updated : task));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al actualizar estado');
-      await loadData();
+      const updated = await updateTask(id, {
+        status: statusToApi(status),
+        limitDate: currentResource.limitDate,
+      });
+      setTaskResources(prev => prev.map(t => t.id === id ? updated : t));
+      setTasks(prev => prev.map(t => t.id === id ? { ...taskToUi(updated, categories), assignedTo: t.assignedTo } : t));
+    } catch {
+      setTasks(previous);
+      setError('No se pudo actualizar el estado de la tarea.');
     }
   };
 
@@ -665,71 +642,161 @@ export function TaskManagement() {
     if (!form.title || !form.category || !form.dueDate) return;
     const category = categories.find(c => c.name === form.category);
     if (!category) return;
+    setSaving(true);
+    setError(null);
     try {
-      setSaving(true);
-      const newTask = await createTask({
+      const created = await createTask({
         categoryId: category.id,
         title: form.title.trim(),
         description: form.description.trim(),
-        hours: Number(form.hours) || 1,
+        hours: Number(form.hours) || 0,
         priority: priorityToApi(form.priority),
         difficulty: difficultyToApi(form.difficulty),
-        limitDate: toIsoDateTime(form.dueDate),
-        tools: splitList(form.tools),
-        knowledge: splitList(form.knowledge),
+        limitDate: toLimitDateISO(form.dueDate),
+        tools: splitCsv(form.tools),
+        knowledge: splitCsv(form.knowledge),
       });
-      setApiTasks(prev => [newTask, ...prev]);
+      setTaskResources(prev => [created, ...prev]);
+      setTasks(prev => [taskToUi(created, categories), ...prev]);
       setForm({ title: '', description: '', category: '', hours: '', priority: 'Media', difficulty: 'Media', tools: '', knowledge: '', dueDate: '' });
       setShowModal(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al crear tarea');
+    } catch {
+      setError('No se pudo crear la tarea.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleBulkAI = async () => {
-    const unassigned = tasks.filter(t => !t.assignedTo);
-    if (unassigned.length === 0 || aiLoading) return;
+  const handleOpenCreateTask = () => {
+    if (!user?.teamId) {
+      setError('No se encontró un equipo asociado al usuario.');
+      return;
+    }
+    if (categories.length === 0) {
+      setError('Primero crea una categoría. El backend exige categoryId para crear tareas.');
+      return;
+    }
+    setError(null);
+    setShowModal(true);
+  };
+
+  const loadCandidatesForTask = async (taskId: number) => {
+    if (!user?.teamId) return;
+    setAssignLoading(true);
+    setAssignError(null);
+    setCandidates([]);
     try {
-      setAiLoading(true);
-      setError(null);
+      const candidateData = await getRecommendedCandidates(taskId, user.teamId);
+      const uiCandidates = candidateData
+        .map((candidate: CandidateProfileResource) => {
+          const member = members.find(item => item.id === candidate.userId);
+          if (!member) return null;
+          return {
+            ...member,
+            activeHours: candidate.activeHours,
+            maxHours: candidate.maxHours,
+            availableHours: candidate.availableHours,
+          };
+        })
+        .filter(Boolean) as UICandidate[];
+      setCandidates(uiCandidates);
+      if (uiCandidates.length === 0) setAssignError('No se encontraron candidatos para esta tarea.');
+    } catch {
+      setAssignError('No se pudieron obtener candidatos para esta tarea.');
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const openAssignModal = (taskId: number) => {
+    setSelectedTaskId(taskId);
+    setShowAssign(true);
+    loadCandidatesForTask(taskId);
+  };
+
+  const handleBulkAI = async () => {
+    if (!user?.teamId || aiLoading) return;
+    const unassigned = tasks.filter(t => !t.assignedTo && t.status !== 'Completada' && t.status !== 'Cancelada');
+    if (unassigned.length === 0) {
+      setError('No hay tareas pendientes sin asignar.');
+      return;
+    }
+    setAiLoading(true);
+    setError(null);
+    try {
+      const updates: Array<{ taskId: number; memberName: string }> = [];
       for (const task of unassigned) {
-        if (!user?.teamId) break;
-        const candidates = await getAssignmentCandidates(task.id, user.teamId);
-        const candidate = candidates[0];
-        if (candidate) await confirmAssignmentRecommendation(task.id, candidate.userId);
+        const candidateData = await getRecommendedCandidates(task.id, user.teamId);
+        const candidate = candidateData[0];
+        const member = candidate ? members.find(item => item.id === candidate.userId) : null;
+        if (!candidate || !member) continue;
+        await confirmAssignmentRecommendation(task.id, candidate.userId);
+        const currentResource = taskResources.find(item => item.id === task.id);
+        if (currentResource) {
+          await updateTask(task.id, {
+            status: 'IN_PROGRESS',
+            limitDate: currentResource.limitDate,
+          });
+        }
+        updates.push({ taskId: task.id, memberName: member.name });
       }
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al asignar tareas con IA');
+      if (updates.length === 0) {
+        setError('No se encontraron candidatos para asignar automáticamente.');
+        return;
+      }
+      setTasks(prev => prev.map(task => {
+        const update = updates.find(item => item.taskId === task.id);
+        return update ? { ...task, assignedTo: update.memberName, status: 'En progreso' } : task;
+      }));
+    } catch {
+      setError('No se pudo completar la asignación automática.');
     } finally {
       setAiLoading(false);
     }
   };
 
   const handleEditSave = async (id: number, status: TaskStatus, dueDate: string) => {
+    const currentResource = taskResources.find(t => t.id === id);
+    if (!currentResource) return;
+    setSaving(true);
+    setError(null);
     try {
-      setSaving(true);
-      const updated = await updateTask(id, { status: statusToApi(status), limitDate: toIsoDateTime(dueDate) });
-      setApiTasks(prev => prev.map(task => task.id === id ? updated : task));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al actualizar tarea');
+      const updated = await updateTask(id, {
+        status: statusToApi(status),
+        limitDate: toLimitDateISO(dueDate),
+      });
+      setTaskResources(prev => prev.map(t => t.id === id ? updated : t));
+      setTasks(prev => prev.map(t => t.id === id ? { ...taskToUi(updated, categories), assignedTo: t.assignedTo } : t));
+    } catch {
+      setError('No se pudo guardar la tarea.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleAssign = async (memberId: number) => {
+  const handleAssign = async (userId: number) => {
     if (selectedTaskId === null) return;
+    const member = members.find(item => item.id === userId);
+    if (!member) return;
+    setAssignSaving(true);
+    setAssignError(null);
     try {
-      setAssignLoading(true);
-      await confirmAssignmentRecommendation(selectedTaskId, memberId);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al asignar tarea');
+      await confirmAssignmentRecommendation(selectedTaskId, userId);
+      const currentResource = taskResources.find(item => item.id === selectedTaskId);
+      if (currentResource) {
+        const updated = await updateTask(selectedTaskId, {
+          status: 'IN_PROGRESS',
+          limitDate: currentResource.limitDate,
+        });
+        setTaskResources(prev => prev.map(task => task.id === selectedTaskId ? updated : task));
+      }
+      setTasks(prev => prev.map(t => t.id === selectedTaskId ? { ...t, assignedTo: member.name, status: 'En progreso' } : t));
+      setShowAssign(false);
+      setError(null);
+    } catch {
+      setAssignError('No se pudo confirmar la asignación.');
     } finally {
-      setAssignLoading(false);
+      setAssignSaving(false);
     }
   };
 
@@ -738,7 +805,9 @@ export function TaskManagement() {
     borderColor: focusedField === name ? ACCENT : 'rgba(255,255,255,0.07)'
   });
 
-  if (loading) return <div className="p-6" style={{ color: '#6B7280' }}>Cargando tareas...</div>;
+  if (loading) {
+    return <div className="p-6" style={{ color: '#6B7280', fontSize: '13px' }}>Cargando tareas...</div>;
+  }
 
   return (
     <div className="p-6">
@@ -747,7 +816,7 @@ export function TaskManagement() {
         <div className="flex items-center gap-3">
           <h1 style={{ color: 'white', fontSize: '22px', fontWeight: '700' }}>Gestión de Tareas</h1>
           <span style={{ backgroundColor: 'rgba(91,141,239,0.1)', color: ACCENT, fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '999px', border: '1px solid rgba(91,141,239,0.2)' }}>
-            {tasks.filter(t => t.status !== 'Completada').length} activas
+            {tasks.filter(t => t.status !== 'Completada' && t.status !== 'Cancelada').length} activas
           </span>
         </div>
         <div className="flex gap-2">
@@ -764,9 +833,9 @@ export function TaskManagement() {
               <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
                 <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
                 Asignando...</>
-            ) : <><span>⚡</span> Asignar con IA</>}
+            ) : <><span>⚡</span> Asignación IA</>}
           </button>
-          <button onClick={() => setShowModal(true)}
+          <button onClick={handleOpenCreateTask}
             style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: `linear-gradient(135deg, ${ACCENT}, #7C6FE8)`, border: 'none', borderRadius: '9px', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', boxShadow: `0 4px 14px ${ACCENT}30` }}>
             + Agregar Tarea
           </button>
@@ -774,7 +843,7 @@ export function TaskManagement() {
       </div>
 
       {error && (
-        <div style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#FCA5A5', fontSize: '13px' }}>
+        <div style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', color: '#F59E0B', fontSize: '12px' }}>
           {error}
         </div>
       )}
@@ -796,7 +865,7 @@ export function TaskManagement() {
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
           style={{ ...FIELD_STYLE, width: 'auto', cursor: 'pointer', borderColor: 'rgba(255,255,255,0.07)' }}>
           <option value="">Todos los estados</option>
-          {['Pendiente', 'En progreso', 'Completada'].map(s => <option key={s} value={s}>{s}</option>)}
+          {['Pendiente', 'En progreso', 'Completada', 'Cancelada'].map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
 
@@ -848,7 +917,10 @@ export function TaskManagement() {
                       </div>
                     ) : (
                       <button
-                        onClick={e => { e.stopPropagation(); setSelectedTaskId(task.id); setShowAssign(true); loadAssignmentCandidates(task.id); }}
+                        onClick={e => {
+                          e.stopPropagation();
+                          openAssignModal(task.id);
+                        }}
                         style={{
                           display: 'inline-flex', alignItems: 'center', gap: '5px',
                           padding: '4px 10px', borderRadius: '6px',
@@ -891,10 +963,10 @@ export function TaskManagement() {
         <TaskDetailDrawer
           task={selectedTask}
           categories={categories}
-          members={teamMembers}
+          members={members}
           onClose={() => setSelectedTaskId(null)}
           onStatusChange={handleStatusChange}
-          onAssignClick={() => { setShowAssign(true); loadAssignmentCandidates(selectedTask.id); }}
+          onAssignClick={() => openAssignModal(selectedTask.id)}
           onEditClick={() => setShowEdit(true)}
         />
       )}
@@ -903,10 +975,10 @@ export function TaskManagement() {
       {showAssign && selectedTask && (
         <AssignMemberModal
           task={selectedTask}
-          members={teamMembers}
-          candidates={assignmentCandidates}
+          candidates={candidates}
           loading={assignLoading}
-          error={assignmentError}
+          saving={assignSaving}
+          error={assignError}
           onClose={() => setShowAssign(false)}
           onAssign={handleAssign}
         />
@@ -1001,11 +1073,11 @@ export function TaskManagement() {
                 <button onClick={handleAddTask} disabled={!form.title || !form.category || !form.dueDate || saving}
                   style={{
                     flex: 2, padding: '10px',
-                    background: (!form.title || !form.category || !form.dueDate) ? undefined : `linear-gradient(135deg, ${ACCENT}, #7C6FE8)`,
-                    backgroundColor: (!form.title || !form.category || !form.dueDate) ? '#1A2235' : undefined,
-                    color: (!form.title || !form.category || !form.dueDate) ? '#4B5563' : 'white',
+                    background: (!form.title || !form.category || !form.dueDate || saving) ? undefined : `linear-gradient(135deg, ${ACCENT}, #7C6FE8)`,
+                    backgroundColor: (!form.title || !form.category || !form.dueDate || saving) ? '#1A2235' : undefined,
+                    color: (!form.title || !form.category || !form.dueDate || saving) ? '#4B5563' : 'white',
                     border: 'none', borderRadius: '9px',
-                    cursor: (!form.title || !form.category || !form.dueDate) ? 'not-allowed' : 'pointer',
+                    cursor: (!form.title || !form.category || !form.dueDate || saving) ? 'not-allowed' : 'pointer',
                     fontSize: '13px', fontWeight: '700', transition: 'opacity 0.2s'
                   }}>
                   {saving ? 'Creando...' : 'Crear Tarea'}
@@ -1019,18 +1091,6 @@ export function TaskManagement() {
       {/* Edit Modal */}
       {showEdit && selectedTask && (
         <EditTaskModal task={selectedTask} onClose={() => setShowEdit(false)} onSave={handleEditSave} />
-      )}
-
-      {showAI && selectedTask && (
-        <AIAssignmentModal
-          taskTitle={selectedTask.title}
-          candidates={assignmentCandidates}
-          members={teamMembers}
-          loading={assignLoading}
-          error={assignmentError}
-          onClose={() => setShowAI(false)}
-          onConfirm={handleAssign}
-        />
       )}
     </div>
   );
