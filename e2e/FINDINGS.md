@@ -53,6 +53,8 @@ Fecha: 2026-06-29
 - **Sin redirect a login al expirar el token** — UX menor.
 - **Servicios duplicados**: `profileService` vs `memberProfileService` vs `userService` (mismos endpoints).
 - **Bulk "Asignación IA"** hace N+1 llamadas client-side (`recommend`+`confirm` por tarea) en vez de usar `POST /auto/teams/{teamId}` (1 llamada, transaccional).
+- **Dashboard — "Carga de trabajo del equipo" muestra `Usuario {id}`** en vez del nombre del miembro (`Dashboard.tsx` ~191). `getMemberProfiles` (GET /member-profiles/teams) no trae el nombre y el front no lo cruza con `team.members`. UX feo. Fix: mapear `userId → name` desde el equipo.
+- **`PATCH /assignments/complete` sin usar** — `assignmentService.completeAssignment` es código muerto; el UI completa vía `updateTask(status=DONE)`.
 
 ---
 
