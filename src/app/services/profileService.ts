@@ -41,34 +41,69 @@ export interface MemberProfileResult {
 // HELPERS internos de conversión (string csv <-> array)
 // ============================================================
 
-const csvToArray = (s: string | null | undefined): string[] =>
-  s ? s.split(',').map(x => x.trim()).filter(Boolean) : [];
+export function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(String).map(s => s.trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map(String).map(s => s.trim()).filter(Boolean);
+        }
+      } catch {
+        // fallback to CSV parsing
+      }
+    }
+    return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return [];
+}
 
 const arrayToCsv = (arr: string[]): string => arr.join(', ');
 
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    if (typeof body?.message === 'string' && body.message.trim()) {
+      return body.message;
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return fallback;
+}
+
 // ============================================================
 // LECTURA — perfil propio (sirve para LEADER y MEMBER, es el mismo endpoint)
-// GET /api/v1/users/{userId}
+// GET /api/v1/users/{userId} + GET /api/v1/member-profiles/users/{userId}
 // ============================================================
 
 export async function getUserDetail(userId: number): Promise<UserDetailResult> {
-  const res = await fetch(`${BASE_URL}/users/${userId}`, {
-    method: 'GET',
-    headers: getHeaders(),
-  });
-  if (!res.ok) throw new Error('No se pudo obtener el perfil del usuario');
-  const data = await res.json();
+  const headers = getHeaders();
+  const [userRes, memberProfileRes] = await Promise.all([
+    fetch(`${BASE_URL}/users/${userId}`, { method: 'GET', headers }),
+    fetch(`${BASE_URL}/member-profiles/users/${userId}`, { method: 'GET', headers }),
+  ]);
+
+  if (!userRes.ok) throw new Error('No se pudo obtener el perfil del usuario');
+  const data = await userRes.json();
+  const memberProfile = memberProfileRes.ok ? await memberProfileRes.json() : null;
+  const profileSource = memberProfile ?? data.profile;
 
   return {
     ...data,
     profile: {
-      id: data.profile?.id ?? null,
+      id: profileSource?.id ?? data.profile?.id ?? null,
       userId: data.id,
-      teamId: data.teamId,
-      maxHours: data.profile?.maxHours ?? 0,
-      abilities: csvToArray(data.profile?.abilities),
-      interests: csvToArray(data.profile?.interests),
-      activeHours: data.profile?.activeHours ?? 0,
+      teamId: profileSource?.teamId ?? data.teamId,
+      maxHours: profileSource?.maxHours ?? data.profile?.maxHours ?? 0,
+      abilities: toStringArray(profileSource?.abilities ?? data.profile?.abilities),
+      interests: toStringArray(profileSource?.interests ?? data.profile?.interests),
+      activeHours: profileSource?.activeHours ?? data.profile?.activeHours ?? 0,
     },
   };
 }
@@ -93,7 +128,9 @@ export async function updateMemberProfile(
     }),
   });
 
-  if (!res.ok) throw new Error('No se pudo actualizar el perfil');
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, 'No se pudo actualizar el perfil'));
+  }
 
   // algunos backends devuelven el body vacío en un 200/204 — evitamos que truene
   const text = await res.text();
@@ -114,10 +151,10 @@ export async function getTeamProfiles(teamId: number): Promise<MemberProfileResu
   if (!res.ok) throw new Error('No se pudieron obtener los perfiles del equipo');
   const data = await res.json();
 
-  return data.map((p: any) => ({
+  return data.map((p: MemberProfileResult & { abilities?: unknown; interests?: unknown }) => ({
     ...p,
-    abilities: csvToArray(p.abilities),
-    interests: csvToArray(p.interests),
+    abilities: toStringArray(p.abilities),
+    interests: toStringArray(p.interests),
   }));
 }
 

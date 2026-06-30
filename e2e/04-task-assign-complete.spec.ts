@@ -47,9 +47,9 @@ test('Líder: crear tarea → asignar (candidatos reales) → completar', async 
   await assignDialog.getByRole('button', { name: /Ana Backend/ }).click();
   await assignDialog.getByRole('button', { name: /Confirmar asignación/ }).click();
 
-  // 4) La tarea queda asignada y "En progreso".
+  // 4) La tarea queda asignada y sigue en "Pendiente" hasta que el miembro la inicie.
   await expect(row.getByText('Ana Backend')).toBeVisible({ timeout: 30_000 });
-  await expect(row.getByText('En progreso')).toBeVisible();
+  await expect(row.getByText('Pendiente')).toBeVisible();
 
   // 5) Completar: el drawer de detalle ya quedó abierto tras asignar; marcar "Completada"
   //    (dispara updateTask DONE → el backend completa la asignación y libera horas).

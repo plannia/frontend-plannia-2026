@@ -21,9 +21,9 @@ test('Líder: botón "Asignación IA" asigna automáticamente las tareas sin asi
   // Click "Asignación IA": recorre las no asignadas y confirma el #1 recomendado por cada una.
   await page.getByRole('button', { name: /Asignación IA/ }).click();
 
-  // Después: ya no quedan tareas con botón "Asignar" (todas asignadas) y aparecen "En progreso".
+  // Después: ya no quedan tareas con botón "Asignar" (todas asignadas) y siguen en "Pendiente".
   await expect(page.getByRole('button', { name: 'Asignar' })).toHaveCount(0, { timeout: 60_000 });
-  // Las tareas quedan "En progreso" y asignadas (celdas de la tabla, no la opción del filtro).
-  await expect(page.getByRole('cell', { name: 'En progreso' }).first()).toBeVisible();
+  // Las tareas quedan asignadas pero en "Pendiente" (celdas de la tabla, no la opción del filtro).
+  await expect(page.getByRole('cell', { name: 'Pendiente' }).first()).toBeVisible();
   await expect(page.getByRole('cell', { name: /Dora Backend/ }).first()).toBeVisible();
 });

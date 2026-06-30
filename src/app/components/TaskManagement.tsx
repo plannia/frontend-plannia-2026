@@ -759,13 +759,6 @@ export function TaskManagement() {
         const member = candidate ? members.find(item => item.id === candidate.userId) : null;
         if (!candidate || !member) continue;
         await confirmAssignmentRecommendation(task.id, candidate.userId);
-        const currentResource = taskResources.find(item => item.id === task.id);
-        if (currentResource) {
-          await updateTask(task.id, {
-            status: 'IN_PROGRESS',
-            limitDate: currentResource.limitDate,
-          });
-        }
         updates.push({ taskId: task.id, memberName: member.name });
       }
       if (updates.length === 0) {
@@ -774,7 +767,7 @@ export function TaskManagement() {
       }
       setTasks(prev => prev.map(task => {
         const update = updates.find(item => item.taskId === task.id);
-        return update ? { ...task, assignedTo: update.memberName, status: 'En progreso' } : task;
+        return update ? { ...task, assignedTo: update.memberName } : task;
       }));
     } catch {
       setError('No se pudo completar la asignación automática.');
@@ -819,15 +812,7 @@ export function TaskManagement() {
     setAssignError(null);
     try {
       await confirmAssignmentRecommendation(selectedTaskId, userId);
-      const currentResource = taskResources.find(item => item.id === selectedTaskId);
-      if (currentResource) {
-        const updated = await updateTask(selectedTaskId, {
-          status: 'IN_PROGRESS',
-          limitDate: currentResource.limitDate,
-        });
-        setTaskResources(prev => prev.map(task => task.id === selectedTaskId ? updated : task));
-      }
-      setTasks(prev => prev.map(t => t.id === selectedTaskId ? { ...t, assignedTo: member.name, status: 'En progreso' } : t));
+      setTasks(prev => prev.map(t => t.id === selectedTaskId ? { ...t, assignedTo: member.name } : t));
       setShowAssign(false);
       setError(null);
     } catch {

@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getAssignmentsByUser } from '../services/assignmentService';
 import { getCategoriesByTeam } from '../services/categoryService';
-import { getMemberProfiles } from '../services/dashboardService';
-import { getTasksByTeam, TaskResource } from '../services/taskService';
+import { getPlannerTasks, getMemberProfiles, type DashboardTask } from '../services/dashboardService';
 import { getTeamById } from '../services/teamService';
 
 const CARD_BG = '#141C2B';
 const INPUT_BG = '#1A2235';
 const HEADER_BG = '#0F1723';
 const ACCENT = '#5B8DEF';
+const DONE_COLOR = '#10B981';
+const IN_PROGRESS_ACCENT = '#7C6FE8';
 
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 7am – 7pm
 const COL_WIDTH = 82;
@@ -37,10 +37,16 @@ interface PlannerTask {
   memberId: number;
   title: string;
   category: string;
+  baseColor: string;
   color: string;
+  status: 'IN_PROGRESS' | 'DONE';
   startHour: number;
   endHour: number;
+  naturalStartHour: number;
+  naturalEndHour: number;
+  duration: number;
   dateKey: string;
+  sortOrder: number;
 }
 
 function addDays(date: Date, days: number): Date {
@@ -68,38 +74,97 @@ const dateKey = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-const getDateKeyFromIso = (iso?: string) => {
-  if (!iso) return dateKey(new Date());
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return iso.slice(0, 10);
-  return dateKey(parsed);
-};
-
-const getHourFromIso = (iso?: string, fallback = 9) => {
-  if (!iso) return fallback;
-  const date = new Date(iso);
+const getHourFromDate = (date: Date, fallback = 9) => {
   if (Number.isNaN(date.getTime())) return fallback;
   return date.getHours() + date.getMinutes() / 60;
 };
 
-const taskToPlanner = (
-  task: TaskResource,
-  memberId: number,
-  categoryName: string,
-  color: string
-): PlannerTask => {
-  const startHour = 9;
-  const duration = Math.max(1, Math.min(task.hours || 1, 4));
+const formatHourLabel = (hour: number) => {
+  const h = Math.floor(hour);
+  const m = Math.round((hour - h) * 60);
+  return `${h < 10 ? `0${h}` : h}:${m < 10 ? `0${m}` : m}`;
+};
+
+const hoursBetween = (start: Date, end: Date) =>
+  Math.max(0.5, (end.getTime() - start.getTime()) / 3_600_000);
+
+const clampTimelineHour = (hour: number) =>
+  Math.max(HOURS[0], Math.min(hour, HOURS[HOURS.length - 1] + 1));
+
+const plannerTaskFromApi = (task: DashboardTask, categoryColor: string): PlannerTask | null => {
+  if (task.taskStatus !== 'IN_PROGRESS' && task.taskStatus !== 'DONE') return null;
+
+  const isDone = task.taskStatus === 'DONE';
+  const start = task.taskStartTime ? new Date(task.taskStartTime) : null;
+  const end = isDone && task.taskEndTime ? new Date(task.taskEndTime) : null;
+
+  if (!start && !(isDone && end)) return null;
+  if (isDone && !end) return null;
+
+  const effectiveStart = start ?? (end ? new Date(end.getTime() - Math.max(1, task.taskHours || 1) * 3_600_000) : null);
+  if (!effectiveStart) return null;
+
+  const displayDate = isDone && end ? end : effectiveStart;
+  const naturalStartHour = getHourFromDate(effectiveStart);
+  const naturalEndHour = isDone && end
+    ? getHourFromDate(end)
+    : naturalStartHour + Math.max(1, task.taskHours || 1);
+  const duration = isDone && end
+    ? hoursBetween(effectiveStart, end)
+    : Math.max(1, task.taskHours || 1);
+
   return {
-    id: task.id,
-    memberId,
-    title: task.title,
-    category: categoryName,
-    color,
-    startHour: Math.max(HOURS[0], Math.min(startHour, HOURS[HOURS.length - 1])),
-    endHour: Math.max(startHour + 1, Math.min(startHour + duration, HOURS[HOURS.length - 1] + 1)),
-    dateKey: getDateKeyFromIso(task.limitDate ?? task.startTime),
+    id: task.taskId,
+    memberId: task.userId,
+    title: task.taskName,
+    category: task.taskCategoryName,
+    baseColor: categoryColor,
+    color: isDone ? DONE_COLOR : categoryColor,
+    status: task.taskStatus,
+    startHour: naturalStartHour,
+    endHour: naturalEndHour,
+    naturalStartHour,
+    naturalEndHour,
+    duration: Math.min(duration, HOURS.length),
+    dateKey: dateKey(displayDate),
+    sortOrder: isDone && end ? end.getTime() : effectiveStart.getTime(),
   };
+};
+
+const layoutMemberDayTasks = (tasks: PlannerTask[]): PlannerTask[] => {
+  const done = tasks.filter(task => task.status === 'DONE').sort((a, b) => a.sortOrder - b.sortOrder);
+  const inProgress = tasks.filter(task => task.status === 'IN_PROGRESS').sort((a, b) => a.sortOrder - b.sortOrder);
+
+  let cursor = HOURS[0];
+  const laidOut: PlannerTask[] = [];
+
+  for (const task of done) {
+    const startHour = clampTimelineHour(task.naturalStartHour);
+    const endHour = clampTimelineHour(Math.max(startHour + 0.5, task.naturalEndHour));
+    laidOut.push({
+      ...task,
+      startHour,
+      endHour: Math.max(startHour + 0.5, endHour),
+      color: DONE_COLOR,
+    });
+    cursor = Math.max(cursor, endHour);
+  }
+
+  for (const task of inProgress) {
+    const naturalStart = clampTimelineHour(task.naturalStartHour);
+    const startHour = Math.max(naturalStart, cursor);
+    const maxEnd = HOURS[HOURS.length - 1] + 1;
+    const endHour = Math.min(startHour + Math.max(1, task.duration), maxEnd);
+    laidOut.push({
+      ...task,
+      startHour,
+      endHour: Math.max(startHour + 0.5, endHour),
+      color: task.baseColor,
+    });
+    cursor = endHour;
+  }
+
+  return laidOut;
 };
 
 export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: TeamPlannerProps = {}) {
@@ -130,11 +195,11 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
       setLoading(true);
       setError(null);
       try {
-        const [team, profiles, categoriesData, teamTasks] = await Promise.all([
+        const [team, profiles, categoriesData, plannerTasksData] = await Promise.all([
           getTeamById(user.teamId),
           getMemberProfiles(user.teamId).catch(() => []),
           getCategoriesByTeam(user.teamId),
-          getTasksByTeam(user.teamId),
+          getPlannerTasks(user.teamId),
         ]);
 
         const profileByUser = profiles.reduce<Record<number, any>>((acc: Record<number, any>, profile: any) => {
@@ -155,29 +220,14 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
           };
         });
 
-        const categoryById = categoriesData.reduce<Record<number, { name: string; color: string }>>((acc: Record<number, { name: string; color: string }>, category: any, index: number) => {
-          acc[category.id] = { name: category.name, color: PALETTE[index % PALETTE.length] };
+        const categoryColorById = categoriesData.reduce<Record<number, string>>((acc: Record<number, string>, category: any, index: number) => {
+          acc[category.id] = PALETTE[index % PALETTE.length];
           return acc;
         }, {});
 
-        const assignmentResults = await Promise.all(
-          uiMembers.map(member =>
-            getAssignmentsByUser(member.id)
-              .then(assignments => assignments.map(assignment => ({ ...assignment, memberId: member.id })))
-              .catch(() => [])
-          )
-        );
-        const assignmentByTask = assignmentResults.flat().reduce<Record<number, number>>((acc, assignment) => {
-          acc[assignment.taskId] = assignment.memberId;
-          return acc;
-        }, {});
-
-        const plannerTasks = teamTasks
-          .filter(task => assignmentByTask[task.id])
-          .map(task => {
-            const category = categoryById[task.categoryId] ?? { name: `Categoría ${task.categoryId}`, color: ACCENT };
-            return taskToPlanner(task, assignmentByTask[task.id], category.name, category.color);
-          });
+        const plannerTasks = plannerTasksData
+          .map(task => plannerTaskFromApi(task, categoryColorById[task.taskCategoryId] ?? ACCENT))
+          .filter((task): task is PlannerTask => task !== null);
 
         setMembers(uiMembers);
         setTasks(plannerTasks);
@@ -232,12 +282,20 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
           <p style={{ color: '#4B5563', fontSize: '13px' }}>
             {isReadOnly
               ? 'Vista de solo lectura. Las tareas de otras categorías se muestran como privadas.'
-              : 'Visualiza la carga de trabajo asignada del equipo.'}
+              : 'Visualiza las tareas en progreso y las completadas hoy del equipo.'}
           </p>
         </div>
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-3 justify-end">
-          {Array.from(new Map(tasks.map(task => [task.category, { color: task.color, label: task.category }])).values()).map(({ color, label }) => (
+          <div className="flex items-center gap-1.5">
+            <div style={{ width: '8px', height: '8px', borderRadius: '3px', backgroundColor: DONE_COLOR }} />
+            <span style={{ color: '#4B5563', fontSize: '11px' }}>Completada hoy</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div style={{ width: '8px', height: '8px', borderRadius: '3px', backgroundColor: IN_PROGRESS_ACCENT }} />
+            <span style={{ color: '#4B5563', fontSize: '11px' }}>En progreso</span>
+          </div>
+          {Array.from(new Map(tasks.map(task => [task.category, { color: task.baseColor, label: task.category }])).values()).map(({ color, label }) => (
             <div key={label} className="flex items-center gap-1.5">
               <div style={{ width: '8px', height: '8px', borderRadius: '3px', backgroundColor: color }} />
               <span style={{ color: '#4B5563', fontSize: '11px' }}>{label}</span>
@@ -326,7 +384,9 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
 
             {/* Member rows */}
             {visibleMembers.map((member, memberIdx) => {
-              const memberTasks = visibleTasks.filter(t => t.memberId === member.id).filter(taskMatchesSearch);
+              const memberTasks = layoutMemberDayTasks(
+                visibleTasks.filter(t => t.memberId === member.id).filter(taskMatchesSearch)
+              );
               const wl = getWorkloadState(member.hoursUsed, member.hoursMax);
               const saturation = member.hoursMax > 0 ? member.hoursUsed / member.hoursMax : 0;
 
@@ -399,10 +459,12 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
                               borderRadius: '8px', padding: '7px 9px', overflow: 'hidden',
                             }}>
                               <p style={{ color: '#4B5563', fontSize: '10px', fontWeight: '600', fontStyle: 'italic' }}>Tarea Privada</p>
-                              <p style={{ color: '#2D3748', fontSize: '9px' }}>{task.startHour < 10 ? `0${task.startHour}` : task.startHour}:00 – {task.endHour < 10 ? `0${task.endHour}` : task.endHour}:00</p>
+                              <p style={{ color: '#2D3748', fontSize: '9px' }}>{formatHourLabel(task.startHour)} – {formatHourLabel(task.endHour)}</p>
                             </div>
                           );
                         }
+
+                        const isDone = task.status === 'DONE';
 
                         return (
                           <div key={task.id}
@@ -413,21 +475,34 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
                               position: 'absolute', top: 0,
                               left: `${getTaskLeft(task) + 3}px`, width: `${getTaskWidth(task)}px`,
                               height: '56px', pointerEvents: 'all',
-                              background: `linear-gradient(135deg, ${task.color}22, ${task.color}14)`,
-                              border: `1px solid ${task.color}50`,
-                              borderLeft: `3px solid ${task.color}`,
+                              background: isDone
+                                ? 'linear-gradient(135deg, rgba(16,185,129,0.18), rgba(16,185,129,0.08))'
+                                : `linear-gradient(135deg, ${task.color}22, ${task.color}14)`,
+                              border: isDone ? '1px solid rgba(16,185,129,0.45)' : `1px solid ${task.color}50`,
+                              borderLeft: `3px solid ${isDone ? DONE_COLOR : task.color}`,
                               borderRadius: '8px', padding: '7px 9px',
                               cursor: isReadOnly || !canEditSchedule ? 'default' : 'grab',
                               overflow: 'hidden',
-                              opacity: dragging === task.id ? 0.4 : 1,
+                              opacity: dragging === task.id ? 0.4 : isDone ? 0.9 : 1,
                               boxShadow: dragging === task.id ? 'none' : '0 2px 8px rgba(0,0,0,0.25)',
                               transition: 'opacity 0.15s, box-shadow 0.15s',
                             }}
-                            onMouseEnter={e => { if (!isReadOnly && canEditSchedule) e.currentTarget.style.boxShadow = `0 4px 16px ${task.color}30, 0 0 0 1px ${task.color}60`; }}
-                            onMouseLeave={e => { if (!isReadOnly && canEditSchedule) e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.25)'; }}
+                            onMouseEnter={e => { if (!isReadOnly && !isDone && canEditSchedule) e.currentTarget.style.boxShadow = `0 4px 16px ${task.color}30, 0 0 0 1px ${task.color}60`; }}
+                            onMouseLeave={e => { if (!isReadOnly && !isDone && canEditSchedule) e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.25)'; }}
                           >
-                            <p style={{ color: task.color, fontSize: '10px', fontWeight: '800', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '2px' }}>{task.title}</p>
-                            <p style={{ color: `${task.color}80`, fontSize: '9px', fontWeight: '500' }}>{task.startHour < 10 ? `0${task.startHour}` : task.startHour}:00 – {task.endHour < 10 ? `0${task.endHour}` : task.endHour}:00</p>
+                            <p style={{
+                              color: isDone ? DONE_COLOR : task.color,
+                              fontSize: '10px',
+                              fontWeight: '800',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              marginBottom: '2px',
+                              textDecoration: isDone ? 'line-through' : 'none',
+                            }}>{task.title}</p>
+                            <p style={{ color: isDone ? 'rgba(16,185,129,0.65)' : `${task.color}80`, fontSize: '9px', fontWeight: '500' }}>
+                              {formatHourLabel(task.startHour)} – {formatHourLabel(task.endHour)}
+                            </p>
                           </div>
                         );
                       })}
