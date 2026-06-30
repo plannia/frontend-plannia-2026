@@ -4,17 +4,29 @@ import { CreateTeamScreen } from './components/CreateTeamScreen';
 import { JoinTeamScreen } from './components/JoinTeamScreen';
 import { AppLayout } from './components/AppLayout';
 import { MemberAppLayout } from './components/MemberAppLayout';
+import { useAuth } from './context/AuthContext';
 
 type Screen = 'login' | 'createTeam' | 'joinTeam' | 'app';
 type Role = 'leader' | 'member';
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('login');
-  const [role, setRole] = useState<Role>('leader');
+  const { user, token, logout } = useAuth();
+
+  const [screen, setScreen] = useState<Screen>(() =>
+    user && token ? 'app' : 'login'
+  );
+  const [role, setRole] = useState<Role>(() =>
+    user?.role === 'LEADER' ? 'leader' : user ? 'member' : 'leader'
+  );
 
   const handleLogin = (r: Role) => {
     setRole(r);
     setScreen('app');
+  };
+
+  const handleLogout = () => {
+    logout();
+    setScreen('login');
   };
 
   if (screen === 'login') {
@@ -46,8 +58,8 @@ export default function App() {
   }
 
   if (role === 'member') {
-    return <MemberAppLayout onLogout={() => setScreen('login')} />;
+    return <MemberAppLayout onLogout={handleLogout} />;
   }
 
-  return <AppLayout onLogout={() => setScreen('login')} />;
+  return <AppLayout onLogout={handleLogout} />;
 }
