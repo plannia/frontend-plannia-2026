@@ -34,6 +34,10 @@ test('Líder: el Planificador muestra la tarea asignada del miembro en la fecha 
     headers: { Authorization: `Bearer ${token}` },
     data: { taskId, userId: memberId },
   });
+  await request.put(`${API}/tasks/${taskId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { status: 'IN_PROGRESS', limitDate: `${today}T12:00:00` },
+  });
 
   await loginViaUI(page, lead.email);
   await page.locator('nav').getByRole('button', { name: 'Planificador' }).click();

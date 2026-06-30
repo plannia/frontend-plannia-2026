@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getAssignmentsByUser } from '../services/assignmentService';
 import { getCategoriesByTeam } from '../services/categoryService';
-import { getMemberProfiles } from '../services/dashboardService';
-import { getTasksByTeam, TaskResource } from '../services/taskService';
+import { getDashboardTasks, getMemberProfiles, type DashboardTask } from '../services/dashboardService';
 import { getTeamById } from '../services/teamService';
 
 const CARD_BG = '#141C2B';
@@ -68,37 +66,28 @@ const dateKey = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-const getDateKeyFromIso = (iso?: string) => {
-  if (!iso) return dateKey(new Date());
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return iso.slice(0, 10);
-  return dateKey(parsed);
-};
-
-const getHourFromIso = (iso?: string, fallback = 9) => {
-  if (!iso) return fallback;
-  const date = new Date(iso);
+const getHourFromDate = (date: Date, fallback = 9) => {
   if (Number.isNaN(date.getTime())) return fallback;
   return date.getHours() + date.getMinutes() / 60;
 };
 
-const taskToPlanner = (
-  task: TaskResource,
-  memberId: number,
-  categoryName: string,
+const dashboardTaskToPlanner = (
+  task: DashboardTask,
   color: string
 ): PlannerTask => {
-  const startHour = 9;
-  const duration = Math.max(1, Math.min(task.hours || 1, 4));
+  const start = task.taskStartTime ? new Date(task.taskStartTime) : new Date();
+  const startHour = getHourFromDate(start);
+  const duration = Math.max(1, Math.min(task.taskHours || 1, 4));
+  const clampedStart = Math.max(HOURS[0], Math.min(startHour, HOURS[HOURS.length - 1]));
   return {
-    id: task.id,
-    memberId,
-    title: task.title,
-    category: categoryName,
+    id: task.taskId,
+    memberId: task.userId,
+    title: task.taskName,
+    category: task.taskCategoryName,
     color,
-    startHour: Math.max(HOURS[0], Math.min(startHour, HOURS[HOURS.length - 1])),
-    endHour: Math.max(startHour + 1, Math.min(startHour + duration, HOURS[HOURS.length - 1] + 1)),
-    dateKey: getDateKeyFromIso(task.limitDate ?? task.startTime),
+    startHour: clampedStart,
+    endHour: Math.max(clampedStart + 1, Math.min(clampedStart + duration, HOURS[HOURS.length - 1] + 1)),
+    dateKey: dateKey(start),
   };
 };
 
@@ -130,11 +119,11 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
       setLoading(true);
       setError(null);
       try {
-        const [team, profiles, categoriesData, teamTasks] = await Promise.all([
+        const [team, profiles, categoriesData, dashboardTasks] = await Promise.all([
           getTeamById(user.teamId),
           getMemberProfiles(user.teamId).catch(() => []),
           getCategoriesByTeam(user.teamId),
-          getTasksByTeam(user.teamId),
+          getDashboardTasks(user.teamId),
         ]);
 
         const profileByUser = profiles.reduce<Record<number, any>>((acc: Record<number, any>, profile: any) => {
@@ -155,29 +144,14 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
           };
         });
 
-        const categoryById = categoriesData.reduce<Record<number, { name: string; color: string }>>((acc: Record<number, { name: string; color: string }>, category: any, index: number) => {
-          acc[category.id] = { name: category.name, color: PALETTE[index % PALETTE.length] };
+        const categoryColorById = categoriesData.reduce<Record<number, string>>((acc: Record<number, string>, category: any, index: number) => {
+          acc[category.id] = PALETTE[index % PALETTE.length];
           return acc;
         }, {});
 
-        const assignmentResults = await Promise.all(
-          uiMembers.map(member =>
-            getAssignmentsByUser(member.id)
-              .then(assignments => assignments.map(assignment => ({ ...assignment, memberId: member.id })))
-              .catch(() => [])
-          )
-        );
-        const assignmentByTask = assignmentResults.flat().reduce<Record<number, number>>((acc, assignment) => {
-          acc[assignment.taskId] = assignment.memberId;
-          return acc;
-        }, {});
-
-        const plannerTasks = teamTasks
-          .filter(task => assignmentByTask[task.id])
-          .map(task => {
-            const category = categoryById[task.categoryId] ?? { name: `Categoría ${task.categoryId}`, color: ACCENT };
-            return taskToPlanner(task, assignmentByTask[task.id], category.name, category.color);
-          });
+        const plannerTasks = dashboardTasks
+          .filter(task => task.taskStatus === 'IN_PROGRESS')
+          .map(task => dashboardTaskToPlanner(task, categoryColorById[task.taskCategoryId] ?? ACCENT));
 
         setMembers(uiMembers);
         setTasks(plannerTasks);
@@ -232,7 +206,7 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
           <p style={{ color: '#4B5563', fontSize: '13px' }}>
             {isReadOnly
               ? 'Vista de solo lectura. Las tareas de otras categorías se muestran como privadas.'
-              : 'Visualiza la carga de trabajo asignada del equipo.'}
+              : 'Visualiza las tareas en progreso del equipo según el día en que se iniciaron.'}
           </p>
         </div>
         {/* Legend */}
