@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getCategoriesByTeam } from '../services/categoryService';
-import { getPlannerTasks, getDashboardTasks, getMemberProfiles, type DashboardTask } from '../services/dashboardService';
+import { getPlannerTasks, getMemberProfiles, type DashboardTask } from '../services/dashboardService';
 import { getTeamById } from '../services/teamService';
 
 const CARD_BG = '#141C2B';
@@ -93,19 +93,24 @@ const clampTimelineHour = (hour: number) =>
 
 const plannerTaskFromApi = (task: DashboardTask, categoryColor: string): PlannerTask | null => {
   if (task.taskStatus !== 'IN_PROGRESS' && task.taskStatus !== 'DONE') return null;
-  if (!task.taskStartTime) return null;
-  if (task.taskStatus === 'DONE' && !task.taskEndTime) return null;
 
   const isDone = task.taskStatus === 'DONE';
-  const start = new Date(task.taskStartTime);
-  const end = isDone ? new Date(task.taskEndTime!) : null;
-  const displayDate = isDone ? new Date(task.taskEndTime!) : start;
-  const naturalStartHour = getHourFromDate(start);
+  const start = task.taskStartTime ? new Date(task.taskStartTime) : null;
+  const end = isDone && task.taskEndTime ? new Date(task.taskEndTime) : null;
+
+  if (!start && !(isDone && end)) return null;
+  if (isDone && !end) return null;
+
+  const effectiveStart = start ?? (end ? new Date(end.getTime() - Math.max(1, task.taskHours || 1) * 3_600_000) : null);
+  if (!effectiveStart) return null;
+
+  const displayDate = isDone && end ? end : effectiveStart;
+  const naturalStartHour = getHourFromDate(effectiveStart);
   const naturalEndHour = isDone && end
     ? getHourFromDate(end)
     : naturalStartHour + Math.max(1, task.taskHours || 1);
   const duration = isDone && end
-    ? hoursBetween(start, end)
+    ? hoursBetween(effectiveStart, end)
     : Math.max(1, task.taskHours || 1);
 
   return {
@@ -122,7 +127,7 @@ const plannerTaskFromApi = (task: DashboardTask, categoryColor: string): Planner
     naturalEndHour,
     duration: Math.min(duration, HOURS.length),
     dateKey: dateKey(displayDate),
-    sortOrder: isDone ? new Date(task.taskEndTime!).getTime() : start.getTime(),
+    sortOrder: isDone && end ? end.getTime() : effectiveStart.getTime(),
   };
 };
 
@@ -194,7 +199,7 @@ export function TeamPlanner({ isReadOnly = false, memberCategoryNames = [] }: Te
           getTeamById(user.teamId),
           getMemberProfiles(user.teamId).catch(() => []),
           getCategoriesByTeam(user.teamId),
-          getPlannerTasks(user.teamId).catch(() => getDashboardTasks(user.teamId)),
+          getPlannerTasks(user.teamId),
         ]);
 
         const profileByUser = profiles.reduce<Record<number, any>>((acc: Record<number, any>, profile: any) => {
