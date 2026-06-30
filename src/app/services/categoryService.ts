@@ -30,7 +30,7 @@ export const createCategory = async (teamId: number, name: string, limitDate: st
   return data;
 };
 
-export const updateCategory = async (categoryId: number, name: string, status: string, limitDate: string) => {
+export const updateCategory = async (categoryId: number, name: string, status: string | null, limitDate: string) => {
   const response = await fetch(`${BASE_URL}/categories/${categoryId}`, {
     method: 'PUT',
     headers: getHeaders(),

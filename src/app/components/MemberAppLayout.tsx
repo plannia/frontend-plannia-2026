@@ -5,6 +5,7 @@ import { TeamPlanner } from './TeamPlanner';
 import { MemberProfilePage } from './MemberProfilePage';
 import { useAuth } from '../context/AuthContext';
 import { notifications as initialNotifs, categories } from './mockData';
+import { getUiNotificationsByUser, UiNotification } from '../services/notificationService';
 
 const BG = '#0F1419';
 const SIDEBAR_BG = '#1A2235';
@@ -149,7 +150,13 @@ export function MemberAppLayout({ onLogout }: Props) {
   const [page, setPage] = useState<MemberPage>('dashboard');
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [notifs, setNotifs] = useState(initialNotifs);
+  const [notifs, setNotifs] = useState<UiNotification[]>([]);
+
+  // Notificaciones REALES del backend (antes usaba initialNotifs mock).
+  useEffect(() => {
+    if (!user) return;
+    getUiNotificationsByUser(user.id).then(setNotifs).catch(() => setNotifs([]));
+  }, [user]);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);

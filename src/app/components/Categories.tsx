@@ -295,7 +295,9 @@ export function Categories() {
 
   const handleEdit = async (data: { name: string; dueDate: string; memberIds: number[]; color: string }) => {
     if (!currentSelected) return;
-    await updateCategory(currentSelected.id, data.name, currentSelected.status, data.dueDate);
+    // No reenviar el status actual: el backend solo permite setear CANCELLED manualmente y rechaza
+    // (400) cualquier otro, lo que rompía toda la edición (nombre/fecha/miembros). Enviamos null.
+    await updateCategory(currentSelected.id, data.name, null, data.dueDate);
 
     const toAdd = data.memberIds.filter(id => !currentSelected.memberIds.includes(id));
     const toRemove = currentSelected.memberIds.filter(id => !data.memberIds.includes(id));

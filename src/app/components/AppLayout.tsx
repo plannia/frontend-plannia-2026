@@ -7,7 +7,7 @@ import { TeamManagement } from './TeamManagement';
 import { ProfileNotifications } from './ProfileNotifications';
 import { MemberProfilePage } from './MemberProfilePage';
 import { useAuth } from '../context/AuthContext';
-import { notifications as initialNotifs } from './mockData';
+import { getUiNotificationsByUser, UiNotification } from '../services/notificationService';
 
 const BG = '#0F1419';
 const SIDEBAR_BG = '#1A2235';
@@ -78,7 +78,13 @@ const userRoleLabel = user?.role === 'LEADER' ? 'Líder' : 'Miembro';
   const [searchFocused, setSearchFocused] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [notifs, setNotifs] = useState(initialNotifs);
+  const [notifs, setNotifs] = useState<UiNotification[]>([]);
+
+  // Notificaciones REALES del backend (antes usaba initialNotifs mock).
+  useEffect(() => {
+    if (!user) return;
+    getUiNotificationsByUser(user.id).then(setNotifs).catch(() => setNotifs([]));
+  }, [user]);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
