@@ -19,6 +19,7 @@ const statusColors: Record<string, { bg: string; text: string }> = {
   'Completada': { bg: 'rgba(16,185,129,0.15)', text: '#10B981' },
   'Cancelada': { bg: 'rgba(107,114,128,0.18)', text: '#9CA3AF' },
 };
+const COMPLETED_TASK_LOCKED_MESSAGE = 'Las tareas completadas no pueden cambiar de estado.';
 
 const urgencyColors: Record<string, { bg: string; text: string }> = {
   'Baja': { bg: 'rgba(107,114,128,0.18)', text: '#9CA3AF' },
@@ -283,6 +284,7 @@ function EditTaskModal({ task, onClose, onSave }: {
 }) {
   const [status, setStatus] = useState<TaskStatus>(task.status);
   const [dueDate, setDueDate] = useState(task.dueDate ?? '');
+  const isCompleted = task.status === 'Completada';
 
   const readOnlyField = (label: string, value: string) => (
     <div>
@@ -328,11 +330,17 @@ function EditTaskModal({ task, onClose, onSave }: {
                 const sc = statusColors[s];
                 const active = status === s;
                 return (
-                  <button key={s} onClick={() => setStatus(s)}
+                  <button
+                    key={s}
+                    onClick={() => {
+                      if (!isCompleted) setStatus(s);
+                    }}
+                    disabled={isCompleted}
                     style={{
                       flex: 1, padding: '8px 4px', borderRadius: '8px', border: `1px solid ${active ? sc.text + '60' : 'rgba(255,255,255,0.07)'}`,
                       backgroundColor: active ? sc.bg : 'transparent', color: active ? sc.text : '#4B5563',
-                      fontSize: '11px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s',
+                      fontSize: '11px', fontWeight: '600', cursor: isCompleted ? 'not-allowed' : 'pointer', transition: 'all 0.15s',
+                      opacity: isCompleted && !active ? 0.45 : 1,
                     }}
                   >{s}</button>
                 );
@@ -376,6 +384,7 @@ function TaskDetailDrawer({ task, categories, members, onClose, onStatusChange, 
   const cat = categories.find(c => c.name === task.category);
   const member = members.find(m => m.name === task.assignedTo);
   const uc = urgencyColors[task.urgency] ?? urgencyColors['Media'];
+  const isCompleted = task.status === 'Completada';
 
   return (
     <>
@@ -411,16 +420,22 @@ function TaskDetailDrawer({ task, categories, members, onClose, onStatusChange, 
               const sc = statusColors[s];
               const active = task.status === s;
               return (
-                <button key={s} onClick={() => onStatusChange(task.id, s)}
+                <button
+                  key={s}
+                  onClick={() => {
+                    if (!isCompleted) onStatusChange(task.id, s);
+                  }}
+                  disabled={isCompleted}
                   style={{
                     flex: 1, padding: '6px 4px', borderRadius: '7px',
                     border: `1px solid ${active ? sc.text + '60' : 'rgba(255,255,255,0.07)'}`,
                     backgroundColor: active ? sc.bg : 'transparent',
                     color: active ? sc.text : '#4B5563',
-                    fontSize: '10px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'
+                    fontSize: '10px', fontWeight: '600', cursor: isCompleted ? 'not-allowed' : 'pointer', transition: 'all 0.15s',
+                    opacity: isCompleted && !active ? 0.45 : 1,
                   }}
-                  onMouseEnter={e => { if (!active) { e.currentTarget.style.borderColor = sc.text + '40'; e.currentTarget.style.color = sc.text; } }}
-                  onMouseLeave={e => { if (!active) { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = '#4B5563'; } }}
+                  onMouseEnter={e => { if (!isCompleted && !active) { e.currentTarget.style.borderColor = sc.text + '40'; e.currentTarget.style.color = sc.text; } }}
+                  onMouseLeave={e => { if (!isCompleted && !active) { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = '#4B5563'; } }}
                 >
                   {s === 'Pendiente' ? 'To Do' : s === 'En progreso' ? 'En curso' : 'Completada'}
                 </button>
@@ -505,15 +520,19 @@ function TaskDetailDrawer({ task, categories, members, onClose, onStatusChange, 
             Editar
           </button>
           <button
-            onClick={onAssignClick}
+            onClick={() => {
+              if (!isCompleted) onAssignClick();
+            }}
+            disabled={isCompleted}
             style={{
-              flex: 2, padding: '9px 12px', background: `linear-gradient(135deg, ${ACCENT}, #7C6FE8)`,
+              flex: 2, padding: '9px 12px', background: isCompleted ? 'rgba(255,255,255,0.05)' : `linear-gradient(135deg, ${ACCENT}, #7C6FE8)`,
               border: 'none', borderRadius: '8px', color: 'white', fontSize: '13px',
-              fontWeight: '700', cursor: 'pointer', transition: 'opacity 0.15s',
+              fontWeight: '700', cursor: isCompleted ? 'not-allowed' : 'pointer', transition: 'opacity 0.15s',
+              opacity: isCompleted ? 0.5 : 1,
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
             }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+            onMouseEnter={e => { if (!isCompleted) e.currentTarget.style.opacity = '0.9'; }}
+            onMouseLeave={e => { if (!isCompleted) e.currentTarget.style.opacity = '1'; }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" />
@@ -624,6 +643,10 @@ export function TaskManagement() {
     const previous = tasks;
     const currentResource = taskResources.find(t => t.id === id);
     if (!currentResource) return;
+    if (currentResource.status === 'DONE' && statusToApi(status) !== 'DONE') {
+      setError(COMPLETED_TASK_LOCKED_MESSAGE);
+      return;
+    }
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
     try {
       const updated = await updateTask(id, {
@@ -709,6 +732,11 @@ export function TaskManagement() {
   };
 
   const openAssignModal = (taskId: number) => {
+    const currentResource = taskResources.find(item => item.id === taskId);
+    if (currentResource?.status === 'DONE') {
+      setError(COMPLETED_TASK_LOCKED_MESSAGE);
+      return;
+    }
     setSelectedTaskId(taskId);
     setShowAssign(true);
     loadCandidatesForTask(taskId);
@@ -758,6 +786,10 @@ export function TaskManagement() {
   const handleEditSave = async (id: number, status: TaskStatus, dueDate: string) => {
     const currentResource = taskResources.find(t => t.id === id);
     if (!currentResource) return;
+    if (currentResource.status === 'DONE' && statusToApi(status) !== 'DONE') {
+      setError(COMPLETED_TASK_LOCKED_MESSAGE);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -778,6 +810,11 @@ export function TaskManagement() {
     if (selectedTaskId === null) return;
     const member = members.find(item => item.id === userId);
     if (!member) return;
+    const currentTask = taskResources.find(item => item.id === selectedTaskId);
+    if (currentTask?.status === 'DONE') {
+      setAssignError(COMPLETED_TASK_LOCKED_MESSAGE);
+      return;
+    }
     setAssignSaving(true);
     setAssignError(null);
     try {
@@ -885,6 +922,7 @@ export function TaskManagement() {
               const uc = urgencyColors[task.urgency] ?? urgencyColors['Media'];
               const member = getMember(task.assignedTo);
               const isSelected = selectedTaskId === task.id;
+              const isCompleted = task.status === 'Completada';
               return (
                 <tr key={task.id}
                   onClick={() => setSelectedTaskId(isSelected ? null : task.id)}
@@ -919,18 +957,20 @@ export function TaskManagement() {
                       <button
                         onClick={e => {
                           e.stopPropagation();
-                          openAssignModal(task.id);
+                          if (!isCompleted) openAssignModal(task.id);
                         }}
+                        disabled={isCompleted}
                         style={{
                           display: 'inline-flex', alignItems: 'center', gap: '5px',
                           padding: '4px 10px', borderRadius: '6px',
                           border: '1px dashed rgba(91,141,239,0.3)',
                           backgroundColor: 'rgba(91,141,239,0.04)',
                           color: '#5B8DEF', fontSize: '11px', fontWeight: '600',
-                          cursor: 'pointer', transition: 'all 0.15s'
+                          cursor: isCompleted ? 'not-allowed' : 'pointer', transition: 'all 0.15s',
+                          opacity: isCompleted ? 0.45 : 1,
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(91,141,239,0.6)'; e.currentTarget.style.backgroundColor = 'rgba(91,141,239,0.09)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(91,141,239,0.3)'; e.currentTarget.style.backgroundColor = 'rgba(91,141,239,0.04)'; }}
+                        onMouseEnter={e => { if (!isCompleted) { e.currentTarget.style.borderColor = 'rgba(91,141,239,0.6)'; e.currentTarget.style.backgroundColor = 'rgba(91,141,239,0.09)'; } }}
+                        onMouseLeave={e => { if (!isCompleted) { e.currentTarget.style.borderColor = 'rgba(91,141,239,0.3)'; e.currentTarget.style.backgroundColor = 'rgba(91,141,239,0.04)'; } }}
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" />

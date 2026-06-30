@@ -24,6 +24,7 @@ const urgencyBg: Record<string, string> = {
 };
 
 const statusOptions: TaskStatus[] = ['Pendiente', 'En progreso', 'Completada'];
+const COMPLETED_TASK_LOCKED_MESSAGE = 'Las tareas completadas no pueden cambiar de estado.';
 
 const statusColors: Record<TaskStatus, { color: string; bg: string }> = {
   'Pendiente': { color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
@@ -78,7 +79,9 @@ const taskToUi = (task: TaskResource, categoryName: string): Task => ({
 
 function DetailSidebar({ task, saving, onClose, onSave }: { task: Task; saving: boolean; onClose: () => void; onSave: (id: number, status: TaskStatus) => void }) {
   const [selectedStatus, setSelectedStatus] = useState<TaskStatus>(task.status);
+  const isCompleted = task.status === 'Completada';
   const hasChange = selectedStatus !== task.status;
+  const canSave = hasChange && !saving && !isCompleted;
 
   return (
     <>
@@ -163,15 +166,19 @@ function DetailSidebar({ task, saving, onClose, onSave }: { task: Task; saving: 
               {statusOptions.map(s => (
                 <button
                   key={s}
-                  onClick={() => setSelectedStatus(s)}
+                  onClick={() => {
+                    if (!isCompleted) setSelectedStatus(s);
+                  }}
+                  disabled={isCompleted}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '10px 14px', borderRadius: '9px', border: 'none', cursor: 'pointer',
+                    padding: '10px 14px', borderRadius: '9px', border: 'none', cursor: isCompleted ? 'not-allowed' : 'pointer',
                     backgroundColor: selectedStatus === s ? statusColors[s].bg : 'rgba(255,255,255,0.03)',
+                    opacity: isCompleted && selectedStatus !== s ? 0.45 : 1,
                     transition: 'all 0.15s', textAlign: 'left',
                   }}
-                  onMouseEnter={e => { if (selectedStatus !== s) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
-                  onMouseLeave={e => { if (selectedStatus !== s) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.03)'; }}
+                  onMouseEnter={e => { if (!isCompleted && selectedStatus !== s) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
+                  onMouseLeave={e => { if (!isCompleted && selectedStatus !== s) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.03)'; }}
                 >
                   <div style={{
                     width: '16px', height: '16px', borderRadius: '50%',
@@ -192,15 +199,15 @@ function DetailSidebar({ task, saving, onClose, onSave }: { task: Task; saving: 
         <div style={{ padding: '14px 20px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           <button
             onClick={() => onSave(task.id, selectedStatus)}
-            disabled={!hasChange || saving}
+            disabled={!canSave}
             style={{
               width: '100%',
-              background: hasChange && !saving ? `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` : 'rgba(255,255,255,0.05)',
-              color: hasChange && !saving ? 'white' : '#374151',
+              background: canSave ? `linear-gradient(135deg, ${ACCENT}, ${PURPLE})` : 'rgba(255,255,255,0.05)',
+              color: canSave ? 'white' : '#374151',
               borderRadius: '9px', padding: '11px', border: 'none',
-              cursor: hasChange && !saving ? 'pointer' : 'not-allowed',
+              cursor: canSave ? 'pointer' : 'not-allowed',
               fontSize: '13px', fontWeight: '700',
-              boxShadow: hasChange && !saving ? `0 4px 14px ${ACCENT}30` : 'none',
+              boxShadow: canSave ? `0 4px 14px ${ACCENT}30` : 'none',
               transition: 'all 0.18s',
             }}
           >
@@ -258,6 +265,10 @@ export function MisTareas() {
   const handleSave = async (id: number, status: TaskStatus) => {
     const currentResource = taskResources.find(task => task.id === id);
     if (!currentResource) return;
+    if (currentResource.status === 'DONE' && statusToApi(status) !== 'DONE') {
+      setError(COMPLETED_TASK_LOCKED_MESSAGE);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
