@@ -23,6 +23,22 @@ interface Profile {
 const getInitials = (name: string) =>
   name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
+function mapUserDetailToProfile(data: Awaited<ReturnType<typeof getUserDetail>>): Profile {
+  return {
+    id: data.id,
+    role: data.role,
+    name: data.name,
+    email: data.email,
+    position: data.position,
+    initials: getInitials(data.name),
+    maxHours: data.profile.maxHours,
+    activeHours: data.profile.activeHours,
+    abilities: data.profile.abilities,
+    interests: data.profile.interests,
+    taskStatusCounts: data.taskStatusCounts,
+  };
+}
+
 function Pill({ text, color, onRemove }: { text: string; color: string; onRemove?: () => void }) {
   return (
     <span style={{
@@ -74,11 +90,26 @@ function ChipInput({ value, onChange, color, placeholder }: { value: string[]; o
 function EditModal({ profile, onClose, onSave }: {
   profile: Profile;
   onClose: () => void;
-  onSave: (data: { maxHours: number; abilities: string[]; interests: string[] }) => void;
+  onSave: (data: { maxHours: number; abilities: string[]; interests: string[] }) => Promise<void>;
 }) {
   const [maxHours, setMaxHours] = useState(profile.maxHours);
   const [abilities, setAbilities] = useState<string[]>([...profile.abilities]);
   const [interests, setInterests] = useState<string[]>([...profile.interests]);
+  const [loading, setLoading] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  const handleSave = async () => {
+    setLoading(true);
+    setSaveError('');
+    try {
+      await onSave({ maxHours, abilities, interests });
+      onClose();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'No se pudo guardar el perfil.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <>
@@ -124,17 +155,22 @@ function EditModal({ profile, onClose, onSave }: {
               <label style={{ color: '#6B7280', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '7px' }}>Intereses</label>
               <ChipInput value={interests} onChange={setInterests} color={PURPLE} placeholder="Ej: UX Research, IA..." />
             </div>
+
+            {saveError && (
+              <p style={{ color: '#F87171', fontSize: '12px', textAlign: 'center', margin: 0 }}>{saveError}</p>
+            )}
           </div>
 
           <div style={{ padding: '14px 22px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-            <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: '9px', border: '1px solid rgba(255,255,255,0.08)', backgroundColor: 'transparent', color: '#6B7280', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+            <button onClick={onClose} disabled={loading} style={{ padding: '9px 18px', borderRadius: '9px', border: '1px solid rgba(255,255,255,0.08)', backgroundColor: 'transparent', color: '#6B7280', fontSize: '13px', fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer' }}>
               Cancelar
             </button>
             <button
-              onClick={() => { onSave({ maxHours, abilities, interests }); onClose(); }}
-              style={{ padding: '9px 18px', borderRadius: '9px', border: 'none', background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', boxShadow: `0 4px 14px ${ACCENT}30` }}
+              onClick={handleSave}
+              disabled={loading}
+              style={{ padding: '9px 18px', borderRadius: '9px', border: 'none', background: `linear-gradient(135deg, ${ACCENT}, ${PURPLE})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: loading ? 'not-allowed' : 'pointer', boxShadow: `0 4px 14px ${ACCENT}30`, opacity: loading ? 0.7 : 1 }}
             >
-              Guardar cambios
+              {loading ? 'Guardando...' : 'Guardar cambios'}
             </button>
           </div>
         </div>
@@ -155,19 +191,7 @@ export function MemberProfilePage() {
     setLoading(true);
     getUserDetail(user.id)
       .then(data => {
-        setProfile({
-          id: data.id,
-          role: data.role,
-          name: data.name,
-          email: data.email,
-          position: data.position,
-          initials: getInitials(data.name),
-          maxHours: data.profile.maxHours,
-          activeHours: data.profile.activeHours,
-          abilities: data.profile.abilities,
-          interests: data.profile.interests,
-          taskStatusCounts: data.taskStatusCounts,
-        });
+        setProfile(mapUserDetailToProfile(data));
         setError(null);
       })
       .catch(() => setError('No se pudo cargar el perfil.'))
@@ -175,13 +199,11 @@ export function MemberProfilePage() {
   }, [user]);
 
   const handleSave = async ({ maxHours, abilities, interests }: { maxHours: number; abilities: string[]; interests: string[] }) => {
-    if (!profile) return;
-    try {
-      await updateMemberProfile(profile.id, { maxHours, abilities, interests });
-      setProfile(p => p ? { ...p, maxHours, abilities, interests } : p);
-    } catch {
-      setError('No se pudo guardar el perfil.');
-    }
+    if (!user) return;
+    await updateMemberProfile(user.id, { maxHours, abilities, interests });
+    const data = await getUserDetail(user.id);
+    setProfile(mapUserDetailToProfile(data));
+    setError(null);
   };
 
   if (loading) {

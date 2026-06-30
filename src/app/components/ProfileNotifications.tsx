@@ -296,9 +296,22 @@ export function ProfileNotifications({ initialTab = 'profile' }: Props) {
   const markRead = (id: number) => setNotifList(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
 
   const handleSave = async (data: { abilities: string[]; interests: string[]; maxHours: number }) => {
-    if (!profile) return;
-    await updateMemberProfile(profile.id, data);
-    setProfile(p => p ? { ...p, ...data } : p);
+    if (!user) return;
+    await updateMemberProfile(user.id, data);
+    const refreshed = await getUserDetail(user.id);
+    setProfile({
+      id: refreshed.id,
+      name: refreshed.name,
+      email: refreshed.email,
+      position: refreshed.position,
+      role: refreshed.role,
+      initials: getInitials(refreshed.name),
+      maxHours: refreshed.profile.maxHours,
+      activeHours: refreshed.profile.activeHours,
+      abilities: refreshed.profile.abilities,
+      interests: refreshed.profile.interests,
+      taskStatusCounts: refreshed.taskStatusCounts,
+    });
   };
 
   const filteredNotifs = notifList.filter(n =>
