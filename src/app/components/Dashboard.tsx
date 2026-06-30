@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDashboardTasks, getMemberProfiles } from '../services/dashboardService';
+import { getDashboardTasks, getMemberProfiles, type DashboardTask, type DashboardMemberProfile } from '../services/dashboardService';
+import { getTeamById } from '../services/teamService';
 
 const ACCENT = '#5B8DEF';
 const PURPLE = '#7C6FE8';
@@ -28,7 +29,7 @@ function getInitials(name: string) {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
-function StatCard({ title, value, subtitle, icon, color }: { title: string; value: number; subtitle: string; icon: React.ReactNode; color: string }) {
+function StatCard({ title, value, subtitle, icon, color }: { title: string; value: number; subtitle: string; icon: ReactNode; color: string }) {
   return (
     <div className="rounded-xl p-5" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)', flex: 1 }}>
       <div className="flex items-start justify-between mb-4">
@@ -47,20 +48,27 @@ function StatCard({ title, value, subtitle, icon, color }: { title: string; valu
 
 export function Dashboard() {
   const { user } = useAuth();
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [profiles, setProfiles] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<DashboardTask[]>([]);
+  const [profiles, setProfiles] = useState<DashboardMemberProfile[]>([]);
+  const [memberNames, setMemberNames] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user?.teamId) return;
     const load = async () => {
       try {
-        const [t, p] = await Promise.all([
+        const [t, p, team] = await Promise.all([
           getDashboardTasks(user.teamId!),
           getMemberProfiles(user.teamId!),
+          getTeamById(user.teamId!),
         ]);
         setTasks(t);
         setProfiles(p);
+        const names: Record<number, string> = {};
+        for (const member of team.members ?? []) {
+          names[member.id] = member.name;
+        }
+        setMemberNames(names);
       } catch (err) {
         console.error(err);
       } finally {
@@ -181,14 +189,15 @@ export function Dashboard() {
             {profiles.map((m, i) => {
               const color = getColor(i);
               const pct = m.maxHours > 0 ? (m.activeHours / m.maxHours) * 100 : 0;
+              const memberName = memberNames[m.userId] ?? `Usuario ${m.userId}`;
               return (
                 <div key={m.id} className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${color}25` }}>
-                    <span style={{ color, fontSize: '11px', fontWeight: '700' }}>{String(m.userId).slice(0, 2)}</span>
+                    <span style={{ color, fontSize: '11px', fontWeight: '700' }}>{getInitials(memberName)}</span>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="flex justify-between mb-1">
-                      <span style={{ color: '#D1D5DB', fontSize: '13px' }}>Usuario {m.userId}</span>
+                      <span style={{ color: '#D1D5DB', fontSize: '13px' }}>{memberName}</span>
                       <span style={{ color: '#6B7280', fontSize: '12px' }}>{m.activeHours}/{m.maxHours}h</span>
                     </div>
                     <div style={{ height: '5px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden' }}>
