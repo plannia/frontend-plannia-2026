@@ -7,6 +7,7 @@ export interface DashboardTask {
   taskName: string;
   taskStatus: 'TO_DO' | 'IN_PROGRESS' | 'DONE';
   taskStartTime: string;
+  taskEndTime?: string | null;
   taskHours: number;
   taskCategoryId: number;
   taskCategoryName: string;
@@ -28,6 +29,15 @@ export const getDashboardTasks = async (teamId: number): Promise<DashboardTask[]
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.message || 'Error al obtener tareas');
+  return data as DashboardTask[];
+};
+
+export const getPlannerTasks = async (teamId: number): Promise<DashboardTask[]> => {
+  const response = await fetch(`${BASE_URL}/tasks/planner/teams/${teamId}`, {
+    headers: getHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Error al obtener tareas del planificador');
   return data as DashboardTask[];
 };
 
