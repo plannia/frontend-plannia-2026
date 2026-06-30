@@ -15,6 +15,8 @@ const ACCENT = '#5B8DEF';
 const CARD_BG = '#141C2B';
 const INPUT_BG = '#1A2235';
 const PALETTE = ['#5B8DEF', '#7C6FE8', '#10B981', '#F59E0B', '#EC4899', '#EF4444', '#14B8A6', '#F97316'];
+/** Deshabilitado temporalmente hasta completar integración Google. */
+const GANTT_FEATURE_ENABLED = false;
 
 type CategoryStatus = 'TO_DO' | 'IN_PROGRESS' | 'DONE';
 
@@ -272,7 +274,7 @@ export function Categories() {
         setAllTasks(tasksData);
         setSelectedId(prev => prev ?? (uiCats[0]?.id ?? null));
         setError(null);
-        setGanttError(null);
+        if (GANTT_FEATURE_ENABLED) setGanttError(null);
       })
       .catch(() => setError('No se pudieron cargar las categorías.'))
       .finally(() => setLoading(false));
@@ -308,7 +310,7 @@ export function Categories() {
   };
 
   const handleGantt = async () => {
-    if (!currentSelected) return;
+    if (!GANTT_FEATURE_ENABLED || !currentSelected) return;
     if (currentSelected.memberIds.length === 0) {
       setGanttError('Asigna al menos un miembro a la categoría antes de generar el Gantt.');
       return;
@@ -416,6 +418,7 @@ export function Categories() {
           </button>
         </div>
 
+        {GANTT_FEATURE_ENABLED && (
         <div className="rounded-xl p-4 mb-5" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
@@ -471,6 +474,7 @@ export function Categories() {
             </p>
           )}
         </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4 mb-5">
           <div className="rounded-xl p-4" style={{ backgroundColor: CARD_BG, border: '1px solid rgba(255,255,255,0.06)' }}>
